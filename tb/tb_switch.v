@@ -83,9 +83,14 @@ module tb_switch;
     end
 
     wire obclk, olrck, osdata, audio_on;
+    tri1 i2c_sda;
     top #(.WBITS(16), .GSH(4)) dut (
         .mclk_in(mclk), .i2s_bclk_in(bclk), .i2s_lrck_in(lrck),
         .i2s_sdata_in(sdata), .dsd_on(dsd_on),
+        .in1_bclk(1'b0), .in1_lrck(1'b0), .in1_sdata(1'b0),
+        .in2_bclk(1'b0), .in2_lrck(1'b0), .in2_sdata(1'b0),
+        .in3_bclk(1'b0), .in3_lrck(1'b0), .in3_sdata(1'b0),
+        .i2c_scl(1'b1), .i2c_sda(i2c_sda),
         .i2s_bclk_out(obclk), .i2s_lrck_out(olrck), .i2s_sdata_out(osdata),
         .audio_on(audio_on));
 

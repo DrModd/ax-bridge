@@ -1,10 +1,10 @@
 `timescale 1ns/1ps
 // AX5689 input bridge (Tang Primer 25K, GW5A-LV25MG121NC1/I0).
 //
-//   Fox (I2S/DSD master, own clocks)          local 49.152 MHz oscillator
-//            |  BCLK, LRCK/DATA2, SDATA/DATA1, DSD_ON        |
-//            v                                                v
-//   [bclk_rx]  -- async FIFO -->  rate_mon / DoP detector    [i2s_tx32] -> AX5689
+//   4 inputs: 0 = Fox (PCM/DoP/DSD), 1..3 = I2S PCM (any own clocks)
+//            |  BCLK, LRCK/DATA2, SDATA/DATA1, DSD_ON (input 0)
+//            v                                         local 49.152 MHz
+//   [in_mux] -> [bclk_rx] -- async FIFO -->  rate_mon / DoP   [i2s_tx32] -> AX5689
 //                                   |                            ^  I2S 192k/32
 //    PCM 44.1/48   -> x2 hb_a -> x2 hb_b --+                     |
 //    PCM 88.2/96   ->           x2 hb_b ---+                     |
@@ -15,16 +15,24 @@
 //
 // Everything except bclk_rx and the FIFO write side runs on the local
 // MCLK. The input clock never reaches the output: it only clocks data in.
+// Control / status: I2C slave (see README for the register map).
 module top #(
     parameter WBITS = 18,      // rate_mon window 2^WBITS MCLK
     parameter GSH   = 0,       // DPLL gear length shift (sim only)
-    parameter DSD_SDATA_IS_RIGHT = 1
+    parameter DSD_SDATA_IS_RIGHT = 1,
+    parameter USE_DCS = 0,
+    parameter [6:0] I2C_ADDR = 7'h5A
 ) (
     input  wire mclk_in,        // 49.152 MHz local oscillator
-    input  wire i2s_bclk_in,    // transport BCLK / DSD bit clock
-    input  wire i2s_lrck_in,    // LRCK / DSD DATA2
-    input  wire i2s_sdata_in,   // SDATA / DSD DATA1
-    input  wire dsd_on,         // Amanero-style native-DSD flag
+    input  wire i2s_bclk_in,    // input 0 (Fox): BCLK / DSD bit clock
+    input  wire i2s_lrck_in,    //   LRCK / DSD DATA2
+    input  wire i2s_sdata_in,   //   SDATA / DSD DATA1
+    input  wire dsd_on,         //   Amanero-style native-DSD flag
+    input  wire in1_bclk, in1_lrck, in1_sdata,   // inputs 1..3: I2S PCM
+    input  wire in2_bclk, in2_lrck, in2_sdata,
+    input  wire in3_bclk, in3_lrck, in3_sdata,
+    input  wire i2c_scl,
+    inout  wire i2c_sda,
     output wire i2s_bclk_out,
     output wire i2s_lrck_out,
     output wire i2s_sdata_out,
@@ -37,18 +45,41 @@ module top #(
     always @(posedge clk) if (~&por) por <= por + 8'd1;
     wire rst_n = &por;
 
+    // ---------------- input selector ----------------
+    // sel_cur changes only inside a hold window: front end in reset.
+    reg  [1:0]  sel_cur;
+    reg  [10:0] hold_cnt;
+    reg         hold;                      // registered: clean async reset
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) hold <= 1'b1;
+        else        hold <= (hold_cnt != 11'd0);
+    end
+    wire rst_in_n = rst_n & ~hold;
+
+    wire m_bclk, m_lrck, m_sdata, m_dsd;
+    wire [3:0] in_active;
+    in_mux #(.USE_DCS(USE_DCS)) u_mux (
+        .clk(clk), .rst_n(rst_n), .sel(sel_cur),
+        .bclk_in({in3_bclk, in2_bclk, in1_bclk, i2s_bclk_in}),
+        .lrck_in({in3_lrck, in2_lrck, in1_lrck, i2s_lrck_in}),
+        .sdata_in({in3_sdata, in2_sdata, in1_sdata, i2s_sdata_in}),
+        .dsd_on0(dsd_on),
+        .bclk(m_bclk), .lrck(m_lrck), .sdata(m_sdata), .dsd_on(m_dsd),
+        .active(in_active)
+    );
+
     reg [1:0] rst_b;
-    always @(posedge i2s_bclk_in or negedge rst_n) begin
-        if (!rst_n) rst_b <= 2'b00;
-        else        rst_b <= {rst_b[0], 1'b1};
+    always @(posedge m_bclk or negedge rst_in_n) begin
+        if (!rst_in_n) rst_b <= 2'b00;
+        else           rst_b <= {rst_b[0], 1'b1};
     end
 
     // ---------------- input clock domain ----------------
     wire        rx_we;
     wire [64:0] rx_wd;
     bclk_rx #(.SDATA_IS_RIGHT(DSD_SDATA_IS_RIGHT)) u_rx (
-        .bclk(i2s_bclk_in), .rst_n(rst_b[1]),
-        .lrck(i2s_lrck_in), .sdata(i2s_sdata_in), .dsd_on(dsd_on),
+        .bclk(m_bclk), .rst_n(rst_b[1]),
+        .lrck(m_lrck), .sdata(m_sdata), .dsd_on(m_dsd),
         .wr_en(rx_we), .wr_data(rx_wd)
     );
 
@@ -56,8 +87,8 @@ module top #(
     wire [64:0] f_rd;
     reg         f_re;
     afifo #(.W(65), .AW(4)) u_fifo (
-        .wclk(i2s_bclk_in), .wrst_n(rst_b[1]), .we(rx_we), .wdata(rx_wd), .full(f_full),
-        .rclk(clk), .rrst_n(rst_n), .re(f_re), .rdata(f_rd), .empty(f_empty)
+        .wclk(m_bclk), .wrst_n(rst_b[1]), .we(rx_we), .wdata(rx_wd), .full(f_full),
+        .rclk(clk), .rrst_n(rst_in_n), .re(f_re), .rdata(f_rd), .empty(f_empty)
     );
 
     // ---------------- item intake (MCLK) ----------------
@@ -258,7 +289,10 @@ module top #(
 
     // ---------------- control FSM ----------------
     reg [10:0] gain;          // 0..1024
-    wire fault = a_fault | ev_bad | mode_bad | stage_ovf |
+    reg  [1:0] ctl_sel;       // I2C: requested input
+    reg        ctl_mute;      // I2C: forced mute
+    wire sw_req = (ctl_sel != sel_cur);
+    wire fault = a_fault | ev_bad | mode_bad | stage_ovf | sw_req | ctl_mute |
                  (rm_seq != seq_seen && (!cls_ok || cls_path != path ||
                   rm_k != cfg_k || rm_fam48 != cfg_fam48));
     wire tick = (fpos == 8'd0);
@@ -268,7 +302,10 @@ module top #(
             cst <= C_IDLE; path <= P_X1; cfg_k <= 3'd0; cfg_fam48 <= 1'b0;
             cfg_dsd <= 1'b0; cfg_dop <= 1'b0; seq_seen <= 1'b0; fresh <= 2'd0;
             tmo <= 25'd0; gain <= 11'd0;
+            sel_cur <= 2'd0; hold_cnt <= 11'd0;
         end else begin
+            if (hold_cnt != 11'd0)
+                hold_cnt <= hold_cnt - 11'd1;
             case (cst)
                 C_IDLE: begin
                     gain <= 11'd0;
@@ -276,7 +313,14 @@ module top #(
                         seq_seen <= rm_seq;
                         if (fresh != 2'd2) fresh <= fresh + 2'd1;
                     end
-                    if (fresh == 2'd2 && cls_ok) begin
+                    if (sw_req) begin
+                        // switch input: front end held in reset ~42 us
+                        sel_cur <= ctl_sel;
+                        hold_cnt <= 11'd2047;
+                        fresh <= 2'd0;
+                    end else if (hold_cnt != 11'd0) begin
+                        fresh <= 2'd0;
+                    end else if (fresh == 2'd2 && cls_ok && !ctl_mute) begin
                         path <= cls_path;
                         cfg_k <= rm_k;
                         cfg_fam48 <= rm_fam48;
@@ -345,4 +389,57 @@ module top #(
     );
 
     assign audio_on = (cst == C_RUN);
+
+    // ---------------- I2C control / status ----------------
+    // 0x00 CTRL    rw  [1:0] input select, [7] mute
+    // 0x01 STATUS  r   [0] audio on, [1] locking/locked, [3:2] current
+    //                  input, [7:4] inputs with a live LRCK
+    // 0x02 FORMAT  r   [2:0] k, [3] 48k family, [4] native DSD, [5] DoP,
+    //                  [7] valid
+    // 0x03 RATE    r   0 none; PCM 1..10 = 44.1,48,88.2,96,176.4,192,
+    //                  352.8,384,705.6,768; 0x11..0x14 DSD64..512;
+    //                  0x21..0x23 DoP64..256 (+0x08: 48k-family DSD)
+    // 0x04 PLL     r   DPLL gear (0..4)
+    // 0x05 ID      r   0xA5
+    // 0x06 VERSION r   0x02
+    wire       sda_oe;
+    wire [7:0] i2c_ptr, i2c_waddr, i2c_wdata;
+    wire       i2c_wr;
+    reg  [7:0] i2c_rd;
+    reg  [7:0] rate_code;
+    assign i2c_sda = sda_oe ? 1'b0 : 1'bz;
+    i2c_slave #(.ADDR(I2C_ADDR)) u_i2c (
+        .clk(clk), .rst_n(rst_n), .scl_in(i2c_scl), .sda_in(i2c_sda),
+        .sda_oe(sda_oe), .ptr(i2c_ptr), .rdata(i2c_rd),
+        .wr(i2c_wr), .waddr(i2c_waddr), .wdata(i2c_wdata));
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            ctl_sel <= 2'd0; ctl_mute <= 1'b0;
+        end else if (i2c_wr && i2c_waddr == 8'h00) begin
+            ctl_sel <= i2c_wdata[1:0];
+            ctl_mute <= i2c_wdata[7];
+        end
+    end
+
+    always @(*) begin
+        if (!running)
+            rate_code = 8'h00;
+        else if (cfg_dsd)
+            rate_code = {4'h1, cfg_fam48, cfg_k - 3'd1};
+        else if (cfg_dop)
+            rate_code = {4'h2, cfg_fam48, cfg_k - 3'd1};
+        else
+            rate_code = 8'd1 + {4'd0, cfg_k, 1'b0} + {7'd0, cfg_fam48};
+        case (i2c_ptr)
+            8'h00: i2c_rd = {ctl_mute, 5'd0, ctl_sel};
+            8'h01: i2c_rd = {in_active, sel_cur, running, cst == C_RUN};
+            8'h02: i2c_rd = {running, 1'b0, cfg_dop, cfg_dsd, cfg_fam48, cfg_k};
+            8'h03: i2c_rd = rate_code;
+            8'h04: i2c_rd = {5'd0, a_gear};
+            8'h05: i2c_rd = 8'hA5;
+            8'h06: i2c_rd = 8'h02;
+            default: i2c_rd = 8'h00;
+        endcase
+    end
 endmodule

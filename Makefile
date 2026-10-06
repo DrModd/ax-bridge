@@ -1,15 +1,15 @@
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 
-RTL := rtl/mem.v rtl/afifo.v rtl/bclk_rx.v rtl/rate_mon.v rtl/dop_det.v \
-       rtl/cic5_dsd.v rtl/fir_stage.v rtl/asrc.v rtl/i2s_tx32.v rtl/top.v
+RTL := rtl/mem.v rtl/afifo.v rtl/in_mux.v rtl/bclk_rx.v rtl/rate_mon.v rtl/dop_det.v \
+       rtl/cic5_dsd.v rtl/fir_stage.v rtl/asrc.v rtl/i2s_tx32.v rtl/i2c_slave.v rtl/top.v
 
-.PHONY: all verify coef units sys switch lint synth clean
+.PHONY: all verify coef units sys switch mux lint synth clean
 
 all: verify
 
 # Everything that must be green before flashing.
-verify: coef lint units synth sys switch
+verify: coef lint units synth sys switch mux
 
 coef:
 	python3 tools/gen_coefs.py --check
@@ -32,6 +32,11 @@ sys:
 # with and without clock stops): relock on the right path, no clicks.
 switch:
 	python3 tb/run_sys.py --switch
+
+# Input selector + I2C: four transports on unrelated clocks (DSD64, PCM
+# 44.1, PCM 96, dead input), selection / mute / status over I2C.
+mux:
+	python3 tb/run_sys.py --mux
 
 # Elaboration gate (the real synthesis is Gowin IDE):
 # 10 multipliers, 13 inferred memories (BSRAM), no errors.
