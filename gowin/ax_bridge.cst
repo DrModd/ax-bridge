@@ -1,0 +1,36 @@
+// Tang Primer 25K (GW5A-LV25MG121NC1/I0) - AX5689 input bridge.
+// Clock-capable inputs: C11 GCLKT_13 (local 49.152 MHz), H5 GCLKT_2
+// (transport BCLK - it clocks the input front end, so it MUST sit on a
+// GCLK pin). Remaining pins keep ppy2's original assignment.
+
+// local 49.152 MHz oscillator (also feeds the AX5689 MCLK on your board)
+IO_LOC "mclk_in" C11;
+IO_PORT "mclk_in" IO_TYPE=LVCMOS33 PULL_MODE=NONE BANK_VCCIO=3.3;
+
+// ---- from the Fox (Luckfox, I2S/DSD master) ----
+IO_LOC "i2s_bclk_in" H5;
+IO_PORT "i2s_bclk_in" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
+IO_LOC "i2s_lrck_in" D11;
+IO_PORT "i2s_lrck_in" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
+IO_LOC "i2s_sdata_in" B11;
+IO_PORT "i2s_sdata_in" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
+// Amanero-style native-DSD flag. Pull-down: PCM when undriven.
+IO_LOC "dsd_on" G11;
+IO_PORT "dsd_on" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
+// ---- to the AX5689: I2S 192 kHz / 32-bit, master ----
+IO_LOC "i2s_bclk_out" E11;
+IO_PORT "i2s_bclk_out" IO_TYPE=LVCMOS33 DRIVE=8 BANK_VCCIO=3.3;
+
+IO_LOC "i2s_lrck_out" A11;
+IO_PORT "i2s_lrck_out" IO_TYPE=LVCMOS33 DRIVE=8 BANK_VCCIO=3.3;
+
+IO_LOC "i2s_sdata_out" K11;
+IO_PORT "i2s_sdata_out" IO_TYPE=LVCMOS33 DRIVE=8 BANK_VCCIO=3.3;
+
+// high while audio is passed (locked and unmuted) - to the STM32
+IO_LOC "audio_on" A10;
+IO_PORT "audio_on" IO_TYPE=LVCMOS33 DRIVE=4 BANK_VCCIO=3.3;
