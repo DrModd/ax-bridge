@@ -21,7 +21,8 @@ module top #(
     parameter GSH   = 0,       // DPLL gear length shift (sim only)
     parameter DSD_SDATA_IS_RIGHT = 1,
     parameter USE_DCS = 0,
-    parameter [6:0] I2C_ADDR = 7'h5A
+    parameter [6:0] I2C_ADDR = 7'h5A,
+    parameter [3:0] ATT_DEFAULT = 4'd0   // PCM headroom after reset, 0.5 dB steps
 ) (
     input  wire mclk_in,        // 49.152 MHz local oscillator
     input  wire i2s_bclk_in,    // input 0 (Fox): BCLK / DSD bit clock
@@ -212,38 +213,59 @@ module top #(
     // ---------------- DSP stages ----------------
     wire stg_clr = (cst == C_IDLE);
     wire feed = running || (cst == C_FADE);
-    wire signed [23:0] pl = item_l[31:8];
-    wire signed [23:0] pr = item_r[31:8];
+    // PCM headroom: 0..6 dB in 0.5 dB steps ahead of every interpolating /
+    // resampling filter, so inter-sample peaks of hot masters do not hit
+    // the S24 rails. 0 dB is bit-transparent (gain exactly 65536).
+    reg  [3:0] ctl_att;
+    reg  [16:0] att_g;
+    always @(*) begin
+        case (ctl_att)
+            4'd0:  att_g = 17'd65536;  4'd1:  att_g = 17'd61870;
+            4'd2:  att_g = 17'd58409;  4'd3:  att_g = 17'd55142;
+            4'd4:  att_g = 17'd52057;  4'd5:  att_g = 17'd49145;
+            4'd6:  att_g = 17'd46396;  4'd7:  att_g = 17'd43801;
+            4'd8:  att_g = 17'd41350;  4'd9:  att_g = 17'd39037;
+            4'd10: att_g = 17'd36854;  4'd11: att_g = 17'd34792;
+            default: att_g = 17'd32846;
+        endcase
+    end
+    wire signed [41:0] pl_g = $signed(item_l[31:8]) * $signed({1'b0, att_g});
+    wire signed [41:0] pr_g = $signed(item_r[31:8]) * $signed({1'b0, att_g});
+    wire signed [41:0] pl_r = pl_g + 42'sd32768;
+    wire signed [41:0] pr_r = pr_g + 42'sd32768;
+    wire signed [23:0] pl = pl_r[39:16];
+    wire signed [23:0] pr = pr_r[39:16];
     wire pcm_feed = feed & item_pcm & ~cfg_dop & ~cfg_dsd;
 
     wire hba_v, hbb_v, hda_v, hdb_v, cic_v, dsf_v;
     wire signed [23:0] hba_l, hba_r, hbb_l, hbb_r, hda_l, hda_r, hdb_l, hdb_r;
     wire signed [23:0] cic_l, cic_r, dsf_l, dsf_r;
     wire ovf_a, ovf_b, ovf_c, ovf_d, ovf_e, ovf_f;
+    wire clp_a, clp_b, clp_c, clp_d, clp_f, clp_s;
 
     fir_stage #(.N(175), .INTERP(1), .AW(7), .CAW(8), .FILE("coef/hb_a.hex")) u_hba (
         .clk(clk), .rst_n(rst_n), .clr(stg_clr),
         .in_valid(pcm_feed && path == P_X4), .in_l(pl), .in_r(pr),
-        .out_valid(hba_v), .out_l(hba_l), .out_r(hba_r), .ovf(ovf_a));
+        .out_valid(hba_v), .out_l(hba_l), .out_r(hba_r), .ovf(ovf_a), .clip(clp_a));
 
     wire hbb_in = (path == P_X4) ? hba_v : (pcm_feed && path == P_X2);
     fir_stage #(.N(91), .INTERP(1), .AW(6), .CAW(7), .FILE("coef/hb_b.hex")) u_hbb (
         .clk(clk), .rst_n(rst_n), .clr(stg_clr),
         .in_valid(hbb_in),
         .in_l(path == P_X4 ? hba_l : pl), .in_r(path == P_X4 ? hba_r : pr),
-        .out_valid(hbb_v), .out_l(hbb_l), .out_r(hbb_r), .ovf(ovf_b));
+        .out_valid(hbb_v), .out_l(hbb_l), .out_r(hbb_r), .ovf(ovf_b), .clip(clp_b));
 
     fir_stage #(.N(23), .INTERP(0), .AW(5), .CAW(5), .FILE("coef/hd_a.hex")) u_hda (
         .clk(clk), .rst_n(rst_n), .clr(stg_clr),
         .in_valid(pcm_feed && path == P_D4), .in_l(pl), .in_r(pr),
-        .out_valid(hda_v), .out_l(hda_l), .out_r(hda_r), .ovf(ovf_c));
+        .out_valid(hda_v), .out_l(hda_l), .out_r(hda_r), .ovf(ovf_c), .clip(clp_c));
 
     wire hdb_in = (path == P_D4) ? hda_v : (pcm_feed && path == P_D2);
     fir_stage #(.N(31), .INTERP(0), .AW(5), .CAW(5), .FILE("coef/hd_b.hex")) u_hdb (
         .clk(clk), .rst_n(rst_n), .clr(stg_clr),
         .in_valid(hdb_in),
         .in_l(path == P_D4 ? hda_l : pl), .in_r(path == P_D4 ? hda_r : pr),
-        .out_valid(hdb_v), .out_l(hdb_l), .out_r(hdb_r), .ovf(ovf_d));
+        .out_valid(hdb_v), .out_l(hdb_l), .out_r(hdb_r), .ovf(ovf_d), .clip(clp_d));
 
     // DSD chunks: native items carry {L16,R16} in item_r; DoP frames carry
     // 16 bits per channel under the marker byte.
@@ -259,7 +281,7 @@ module top #(
     fir_stage #(.N(95), .INTERP(0), .AW(7), .CAW(7), .FILE("coef/dsd.hex")) u_dsf (
         .clk(clk), .rst_n(rst_n), .clr(stg_clr),
         .in_valid(cic_v), .in_l(cic_l), .in_r(cic_r),
-        .out_valid(dsf_v), .out_l(dsf_l), .out_r(dsf_r), .ovf(ovf_f));
+        .out_valid(dsf_v), .out_l(dsf_l), .out_r(dsf_r), .ovf(ovf_f), .clip(clp_f));
 
     wire stage_ovf = ovf_a | ovf_b | ovf_c | ovf_d | ovf_e | ovf_f;
 
@@ -285,7 +307,8 @@ module top #(
         .arm(running), .in_valid(iv), .in_l(il), .in_r(ir),
         .ev(ev), .fpos(fpos),
         .y_valid(a_yv), .y_l(a_yl), .y_r(a_yr),
-        .started(a_started), .gear(a_gear), .fault(a_fault), .dbg_e(a_e));
+        .started(a_started), .gear(a_gear), .fault(a_fault), .dbg_e(a_e),
+        .clip(clp_s));
 
     // ---------------- control FSM ----------------
     reg [10:0] gain;          // 0..1024
@@ -401,7 +424,10 @@ module top #(
     //                  0x21..0x23 DoP64..256 (+0x08: 48k-family DSD)
     // 0x04 PLL     r   DPLL gear (0..4)
     // 0x05 ID      r   0xA5
-    // 0x06 VERSION r   0x02
+    // 0x06 VERSION r   0x03
+    // 0x07 ATT     rw  [3:0] PCM headroom 0..12 x 0.5 dB (0..6 dB)
+    // 0x08 CLIP    r   [0] saturation within the last ~85 ms, [7] sticky
+    //              w   any value clears the sticky bit
     wire       sda_oe;
     wire [7:0] i2c_ptr, i2c_waddr, i2c_wdata;
     wire       i2c_wr;
@@ -415,10 +441,28 @@ module top #(
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            ctl_sel <= 2'd0; ctl_mute <= 1'b0;
+            ctl_sel <= 2'd0; ctl_mute <= 1'b0; ctl_att <= ATT_DEFAULT;
         end else if (i2c_wr && i2c_waddr == 8'h00) begin
             ctl_sel <= i2c_wdata[1:0];
             ctl_mute <= i2c_wdata[7];
+        end else if (i2c_wr && i2c_waddr == 8'h07) begin
+            ctl_att <= (i2c_wdata[3:0] > 4'd12) ? 4'd12 : i2c_wdata[3:0];
+        end
+    end
+
+    // saturation anywhere in the chain (only while audio is passed)
+    wire       clip_now = (cst == C_RUN) &&
+                          (clp_a | clp_b | clp_c | clp_d | clp_f | clp_s);
+    reg [21:0] clip_tmr;
+    reg        clip_sticky;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            clip_tmr <= 22'd0; clip_sticky <= 1'b0;
+        end else begin
+            if (clip_now) clip_tmr <= {22{1'b1}};
+            else if (clip_tmr != 22'd0) clip_tmr <= clip_tmr - 22'd1;
+            if (clip_now) clip_sticky <= 1'b1;
+            else if (i2c_wr && i2c_waddr == 8'h08) clip_sticky <= 1'b0;
         end
     end
 
@@ -438,7 +482,9 @@ module top #(
             8'h03: i2c_rd = rate_code;
             8'h04: i2c_rd = {5'd0, a_gear};
             8'h05: i2c_rd = 8'hA5;
-            8'h06: i2c_rd = 8'h02;
+            8'h06: i2c_rd = 8'h03;
+            8'h07: i2c_rd = {4'd0, ctl_att};
+            8'h08: i2c_rd = {clip_sticky, 6'd0, clip_tmr != 22'd0};
             default: i2c_rd = 8'h00;
         endcase
     end

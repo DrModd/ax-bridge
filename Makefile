@@ -4,12 +4,12 @@ SHELL := /bin/bash
 RTL := rtl/mem.v rtl/afifo.v rtl/in_mux.v rtl/bclk_rx.v rtl/rate_mon.v rtl/dop_det.v \
        rtl/cic5_dsd.v rtl/fir_stage.v rtl/asrc.v rtl/i2s_tx32.v rtl/i2c_slave.v rtl/top.v
 
-.PHONY: all verify coef units sys switch mux lint synth clean
+.PHONY: all verify coef units sys switch mux clip lint synth clean
 
 all: verify
 
 # Everything that must be green before flashing.
-verify: coef lint units synth sys switch mux
+verify: coef lint units synth sys switch mux clip
 
 coef:
 	python3 tools/gen_coefs.py --check
@@ -38,14 +38,19 @@ switch:
 mux:
 	python3 tb/run_sys.py --mux
 
+# Headroom / clip flag: +3 dBFS inter-sample peaks at fs/4 must clip
+# without headroom and pass cleanly with 3.5 dB.
+clip:
+	python3 tb/run_sys.py --clip
+
 # Elaboration gate (the real synthesis is Gowin IDE):
-# 10 multipliers, 13 inferred memories (BSRAM), no errors.
+# 12 multipliers, 14 inferred memories (13 BSRAM + headroom gain ROM), no errors.
 synth:
 	mkdir -p build
 	yosys -p "read_verilog $(RTL); hierarchy -check -top top; proc; opt -fast; memory -nomap; opt -fast; flatten; stat" > build/synth.log
 	! grep -iE "error" build/synth.log
-	grep -E -q '[$$]mul +10$$' build/synth.log
-	grep -E -q '[$$]mem_v2 +13$$' build/synth.log
+	grep -E -q '[$$]mul +12$$' build/synth.log
+	grep -E -q '[$$]mem_v2 +14$$' build/synth.log
 
 clean:
 	rm -rf build

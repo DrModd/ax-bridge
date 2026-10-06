@@ -224,7 +224,47 @@ def run_mux():
         print(f"{'PASS' if ok else 'FAIL'} mux seg{seg}: " + " | ".join(res))
     return ok
 
+def run_clip():
+    """Inter-sample-peak test: L = fs/4 sine at 45 deg, samples exactly at
+    full scale, true peak +3 dBFS. Without headroom the interpolators must
+    saturate and raise the clip flag; with 3.5 dB headroom nothing clips
+    and the level drops by exactly 3.5 dB."""
+    import math
+    ok = True
+    for att, exp_clip in ((0, 1), (7, 0)):
+        params = ["-Ptb_sys.MODE=0", "-Ptb_sys.FS=44100.0", "-Ptb_sys.PPM=23.0",
+                  "-Ptb_sys.FL=11025.0", "-Ptb_sys.FR=3001.0", "-Ptb_sys.NOUT=8192",
+                  f"-Ptb_sys.AMP={math.sqrt(2):.9f}", f"-Ptb_sys.PHL={math.pi/4:.12f}",
+                  f"-Ptb_sys.ATT={att}", "-Ptb_sys.AMPR=0.891"]
+        exe = os.path.join(B, "clip.vvp")
+        r = subprocess.run(["iverilog", "-g2005", "-o", exe, "-s", "tb_sys"] + params +
+                           [os.path.join(ROOT, "tb", "tb_sys.v")] + RTL,
+                           cwd=ROOT, capture_output=True, text=True)
+        if r.returncode:
+            print(r.stdout, r.stderr)
+            return False
+        r = subprocess.run(["vvp", "-n", exe], cwd=ROOT, capture_output=True, text=True)
+        cl = [l for l in r.stdout.splitlines() if "clip sticky" in l]
+        got = int(cl[-1].split()[-1]) if cl else -1
+        y = np.loadtxt(os.path.join(B, "sys_out.txt"), ndmin=2)[-8192:] / 2.0 ** 31
+        gain_db = 20 * math.log10(
+            [65536, 61870, 58409, 55142, 52057, 49145, 46396, 43801][att] / 65536)
+        fl, al, tl = analyse(y[:, 0], 11025.0 * (1 + 23e-6))
+        fr, ar, tr = analyse(y[:, 1], 3001.0 * (1 + 23e-6))
+        exp_r = 20 * math.log10(0.891) + gain_db
+        c = (got == exp_clip) and abs(ar - exp_r) < 0.05
+        if att:
+            exp_l = 20 * math.log10(math.sqrt(2)) + gain_db
+            c &= abs(al - exp_l) < 0.05 and tl < -110 and tr < -110
+        ok &= c
+        print(f"{'PASS' if c else 'FAIL'} clip att={att * 0.5:.1f} dB: clip flag {got} "
+              f"(exp {exp_clip}) | L {al:6.2f} dBFS THD+N {tl:6.1f} | "
+              f"R {ar:6.2f} dBFS (exp {exp_r:6.2f}) THD+N {tr:6.1f}")
+    return ok
+
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["--clip"]:
+        sys.exit(0 if run_clip() else 1)
     if sys.argv[1:2] == ["--mux"]:
         sys.exit(0 if run_mux() else 1)
     if sys.argv[1:2] == ["--switch"]:

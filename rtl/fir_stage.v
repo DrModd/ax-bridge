@@ -25,7 +25,8 @@ module fir_stage #(
     output reg               out_valid,
     output reg  signed [23:0] out_l,
     output reg  signed [23:0] out_r,
-    output reg               ovf
+    output reg               ovf,
+    output reg               clip        // pulse: an output was saturated
 );
     localparam integer T0 = INTERP ? (N + 1) / 2 : N;
     localparam integer T1 = (N - 1) / 2;
@@ -76,6 +77,7 @@ module fir_stage #(
     wire signed [55:0] acc_n = f2 ? {{7{prod[48]}}, prod} : acc + {{7{prod[48]}}, prod};
     wire signed [55:0] acc_r = acc + 56'sd4194304;            // +0.5 LSB
     wire signed [32:0] y_sh  = acc_r[55:23];
+    wire               y_ov  = (y_sh > 33'sd8388607) || (y_sh < -33'sd8388608);
     wire signed [23:0] y_sat = (y_sh > 33'sd8388607)  ? 24'sd8388607 :
                                (y_sh < -33'sd8388608) ? -24'sd8388608 :
                                y_sh[23:0];
@@ -91,6 +93,7 @@ module fir_stage #(
             v2 <= 1'b0; f2 <= 1'b0; l2 <= 1'b0; c2 <= 1'b0;
             prod <= 49'sd0; acc <= 56'sd0; fin <= 1'b0; finc <= 1'b0;
             out_valid <= 1'b0; out_l <= 24'sd0; out_r <= 24'sd0; ovf <= 1'b0;
+            clip <= 1'b0;
         end else if (clr) begin
             qn <= 3'd0; st <= S_IDLE; ph <= 1'b0; we <= 1'b0;
             v1 <= 1'b0; v2 <= 1'b0; fin <= 1'b0; out_valid <= 1'b0;
@@ -180,6 +183,7 @@ module fir_stage #(
                 acc <= acc_n;
             fin <= v2 && l2;
             finc <= c2;
+            clip <= fin & y_ov;
             if (fin) begin
                 if (!finc) out_l <= y_sat;
                 else begin

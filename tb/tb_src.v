@@ -47,6 +47,8 @@ module tb_src #(
         integer iv;
         begin
             iv = $rtoi(v * 8388607.0);
+            if (iv > 8388607)  iv = 8388607;
+            if (iv < -8388608) iv = -8388608;
             pcm32 = {iv[23:0], 8'h00};
         end
     endfunction

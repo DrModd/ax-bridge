@@ -17,6 +17,9 @@ module tb_sys;
     parameter real    TMAX_MS = 400.0;
     parameter integer TB_WBITS = 16;         // 18 = silicon
     parameter integer TB_GSH   = 4;          // 0 = silicon
+    parameter real    PHL      = 0.0;        // phase of the left tone (rad)
+    parameter real    AMPR     = -1.0;       // right amplitude (<0: = AMP)
+    parameter integer ATT      = 0;          // PCM headroom (0.5 dB steps)
 
     // ---------------- local 49.152 MHz ----------------
     reg mclk = 0;
@@ -53,6 +56,8 @@ module tb_sys;
         integer iv;
         begin
             iv = $rtoi(v * 8388607.0);
+            if (iv > 8388607)  iv = 8388607;
+            if (iv < -8388608) iv = -8388608;
             pcm32 = {iv[23:0], 8'h00};
         end
     endfunction
@@ -66,8 +71,8 @@ module tb_sys;
             if (slot == 6'd0) begin
                 if (MODE == 0) begin
                     tt = nfr / FS;
-                    wl = pcm32(AMP * $sin(2.0 * 3.14159265358979 * FL * tt));
-                    wr = pcm32(AMP * $sin(2.0 * 3.14159265358979 * FR * tt));
+                    wl = pcm32(AMP * $sin(2.0 * 3.14159265358979 * FL * tt + PHL));
+                    wr = pcm32(((AMPR < 0.0) ? AMP : AMPR) * $sin(2.0 * 3.14159265358979 * FR * tt));
                 end else begin
                     wl = {(dop_m ? 8'hFA : 8'h05), dsdw[nfr % DSDN][31:16], 8'h00};
                     wr = {(dop_m ? 8'hFA : 8'h05), dsdw[nfr % DSDN][15:0], 8'h00};
@@ -88,7 +93,7 @@ module tb_sys;
     // ---------------- DUT ----------------
     wire obclk, olrck, osdata, audio_on;
     tri1 i2c_sda;
-    top #(.WBITS(TB_WBITS), .GSH(TB_GSH)) dut (
+    top #(.WBITS(TB_WBITS), .GSH(TB_GSH), .ATT_DEFAULT(ATT)) dut (
         .mclk_in(mclk), .i2s_bclk_in(bclk), .i2s_lrck_in(lrck),
         .i2s_sdata_in(sdata), .dsd_on(dsd_on),
         .in1_bclk(1'b0), .in1_lrck(1'b0), .in1_sdata(1'b0),
@@ -129,12 +134,12 @@ module tb_sys;
 
     initial begin
         #(TMAX_MS * 1.0e6);
-        $display("TIMEOUT captured %0d", ncap);
+        $display("TIMEOUT captured %0d, clip sticky %0d", ncap, dut.clip_sticky);
         $fclose(fo);
         $finish;
     end
     always @(posedge mclk) if (ncap >= NOUT) begin
-        $display("CAPTURED %0d samples, gear %0d", ncap, dut.a_gear);
+        $display("CAPTURED %0d samples, gear %0d, clip sticky %0d", ncap, dut.a_gear, dut.clip_sticky);
         $fclose(fo);
         $finish;
     end

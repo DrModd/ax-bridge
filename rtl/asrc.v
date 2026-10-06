@@ -39,7 +39,8 @@ module asrc #(
     output reg               started,
     output reg  [2:0]        gear,
     output reg               fault,
-    output reg  signed [47:0] dbg_e
+    output reg  signed [47:0] dbg_e,
+    output reg               clip         // pulse: output saturated
 );
     localparam [33:0] S44 = 34'd3946001203;   // 0.91875 * 2^32
     localparam [33:0] S48 = 34'h1_0000_0000;  // 1.0
@@ -223,6 +224,7 @@ module asrc #(
     wire signed [55:0] acc_n = a3f ? {{6{prod3[49]}}, prod3} : acc + {{6{prod3[49]}}, prod3};
     wire signed [55:0] acc_r = acc + 56'sd16384;             // +0.5 LSB of >>15
     wire signed [40:0] ysh   = acc_r[55:15];
+    wire               yov   = (ysh > 41'sd2147483647) || (ysh < -41'sd2147483648);
     wire signed [31:0] ysat  = (ysh > 41'sd2147483647)  ? 32'sh7FFF_FFFF :
                                (ysh < -41'sd2147483648) ? 32'sh8000_0000 :
                                ysh[31:0];
@@ -235,7 +237,7 @@ module asrc #(
             coef2 <= 26'sd0; x2 <= 24'sd0;
             a3v <= 1'b0; a3f <= 1'b0; a3l <= 1'b0; a3c <= 1'b0;
             prod3 <= 50'sd0; acc <= 56'sd0; fin <= 1'b0; finc <= 1'b0;
-            y_valid <= 1'b0; y_l <= 32'sd0; y_r <= 32'sd0;
+            y_valid <= 1'b0; y_l <= 32'sd0; y_r <= 32'sd0; clip <= 1'b0;
         end else begin
             y_valid <= 1'b0;
             if (eng_go) begin
@@ -264,6 +266,7 @@ module asrc #(
                 acc <= acc_n;
             fin <= a3v && a3l;
             finc <= a3c;
+            clip <= fin & yov;
             if (fin) begin
                 if (!finc) y_l <= ysat;
                 else begin
