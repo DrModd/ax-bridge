@@ -4,7 +4,7 @@ SHELL := /bin/bash
 RTL := rtl/mem.v rtl/afifo.v rtl/in_mux.v rtl/bclk_rx.v rtl/rate_mon.v rtl/dop_det.v \
        rtl/cic5_dsd.v rtl/fir_stage.v rtl/asrc.v rtl/i2s_tx32.v rtl/i2c_slave.v rtl/top.v
 
-.PHONY: all verify coef units sys switch mux clip lint synth clean
+.PHONY: all verify coef units sys switch mux clip lint synth jf jf_audio clean
 
 all: verify
 
@@ -51,6 +51,29 @@ synth:
 	! grep -iE "error" build/synth.log
 	grep -E -q '[$$]mul +12$$' build/synth.log
 	grep -E -q '[$$]mem_v2 +14$$' build/synth.log
+
+# ---- jitter_fifo (standalone module, not yet wired into top) ----
+JF = jitter_fifo/rtl/jitter_fifo.v jitter_fifo/tb/tb_jitter_fifo.v
+JF_LS64 = -Ptb_jitter_fifo.AW=8 -Ptb_jitter_fifo.NT=64 -Ptb_jitter_fifo.MPH_SH=7 \
+          -Ptb_jitter_fifo.DIV=128 -Ptb_jitter_fifo.TOL=40 \
+          -Ptb_jitter_fifo.COEF_FILE='"jitter_fifo/rtl/fir_ls64_m128.hex"'
+
+# Self-checking ramp / pause bench with a bit-exact reference model,
+# 4 runs: cubic (CR4) and 64-tap FIR, writer faster and slower.
+jf:
+	mkdir -p build
+	iverilog -g2005 -Wall -o build/tb_jf_cr4_fast $(JF)
+	iverilog -g2005 -Wall -Ptb_jitter_fifo.RD_PER=20.325 -o build/tb_jf_cr4_slow $(JF)
+	iverilog -g2005 -Wall $(JF_LS64) -Ptb_jitter_fifo.RD_PER=20.406 -o build/tb_jf_ls64_fast $(JF)
+	iverilog -g2005 -Wall $(JF_LS64) -Ptb_jitter_fifo.RD_PER=20.284 -o build/tb_jf_ls64_slow $(JF)
+	for t in cr4_fast cr4_slow ls64_fast ls64_slow; do \
+	    vvp -n build/tb_jf_$$t | tee build/tb_jf_$$t.log | grep -E "^(PASS|FAIL)"; \
+	    grep -q "^PASS" build/tb_jf_$$t.log; done
+
+# Sine through the buffer with +-2500 ppm: THD+N in bit-exact and
+# interpolated stretches (~15 min).
+jf_audio:
+	python3 jitter_fifo/tb/run_jf.py
 
 clean:
 	rm -rf build
