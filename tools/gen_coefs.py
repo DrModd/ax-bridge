@@ -37,6 +37,12 @@ def hexw(v, width):
     digits = (width + 3) // 4
     return format(int(v) & ((1 << width) - 1), "0%dx" % digits)
 
+def write_bin(name, vals, width):
+    # exact-width binary for $readmemb in the RTL (no width mismatch)
+    with open(os.path.join(OUT, name), "w") as f:
+        for v in vals:
+            f.write(format(int(v) & ((1 << width) - 1), "0%db" % width) + "\n")
+
 def write_hex(name, vals, width=CW):
     os.makedirs(OUT, exist_ok=True)
     with open(os.path.join(OUT, name), "w") as f:
@@ -91,6 +97,7 @@ def build():
     for name, (h, fs, fp, fst, gain) in stages.items():
         hq = q(h)
         write_hex(f"{name}.hex", hq)
+        write_bin(f"{name}.bin", hq, CW)
         res[name] = (hq, fs, fp, fst, gain)
     n, h = asrc_kernel()
     half = h[len(h) // 2:]                 # h(u/P), u = 0 .. L/2*P
@@ -99,6 +106,7 @@ def build():
     pairs = [(int(hq[a]) & ((1 << CW) - 1)) << CW | (int(hq[a + 1]) & ((1 << CW) - 1))
              for a in range(len(hq) - 1)]
     write_hex("asrc.hex", pairs, 2 * CW)
+    write_bin("asrc.bin", pairs, 2 * CW)
     res["asrc"] = (hq,)
     return res
 

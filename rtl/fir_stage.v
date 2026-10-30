@@ -4,7 +4,7 @@
 //             phase 0 uses taps 0,2,4..; phase 1 uses taps 1,3,5..
 //             (coefficients carry the gain of 2).
 //   INTERP=0: /2 decimator. One output pair per two input pairs.
-// N odd. Coefficients: signed 25-bit, 2^23 = 1.0 (coef/*.hex).
+// N odd. Coefficients: signed 25-bit, 2^23 = 1.0 (coef/*.bin).
 // Samples S24; result rounded half-up and saturated to S24.
 // History in a BSRAM ring of 2^AW pairs (2^AW >= taps per output).
 // Input queue: 4 pairs (throughput is checked by the benches: every
@@ -14,7 +14,7 @@ module fir_stage #(
     parameter INTERP = 0,
     parameter AW     = 6,
     parameter CAW    = 5,
-    parameter FILE   = "coef/hd_b.hex"
+    parameter FILE   = "coef/hd_b.bin"
 ) (
     input  wire              clk,
     input  wire              rst_n,

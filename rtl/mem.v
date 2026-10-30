@@ -31,14 +31,15 @@ module sdp_ram #(
     end
 endmodule
 
-// ROM initialised from a hex file, registered read.
+// ROM initialised from a binary file (one word per line, exactly W
+// characters: no width mismatch in any tool), registered read.
 // Gowin IDE: the FILE path is resolved relative to the project; keep the
 // coef/ directory next to the .gprj (see README).
 module rom #(
     parameter W     = 25,
     parameter AW    = 8,
     parameter DEPTH = 256,
-    parameter FILE  = "coef/hd_b.hex"
+    parameter FILE  = "coef/hd_b.bin"
 ) (
     input  wire          clk,
     input  wire [AW-1:0] addr,
@@ -46,7 +47,7 @@ module rom #(
 );
     reg [W-1:0] mem [0:DEPTH-1];
     initial begin
-        $readmemh(FILE, mem);
+        $readmemb(FILE, mem);
         data = {W{1'b0}};
     end
     always @(posedge clk)

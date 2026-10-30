@@ -21,7 +21,7 @@ module asrc #(
     parameter D    = 40,
     parameter FILL = 72,
     parameter GSH  = 0,              // gear length >> GSH (sim speed-up)
-    parameter FILE = "coef/asrc.hex"
+    parameter FILE = "coef/asrc.bin"
 ) (
     input  wire              clk,
     input  wire              rst_n,

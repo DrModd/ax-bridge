@@ -67,7 +67,7 @@ def test_fir(name, N, interp, aw, caw, gap, vec=300, seed=0):
     exe = os.path.join(B, "fir.vvp")
     run(["iverilog", "-g2005", "-o", exe, "-s", "tb_fir",
          f"-Ptb_fir.N={N}", f"-Ptb_fir.INTERP={interp}", f"-Ptb_fir.AW={aw}",
-         f"-Ptb_fir.CAW={caw}", f'-Ptb_fir.FILE="coef/{name}.hex"',
+         f"-Ptb_fir.CAW={caw}", f'-Ptb_fir.FILE="coef/{name}.bin"',
          f"-Ptb_fir.VEC={vec}", f"-Ptb_fir.GAP={gap}",
          os.path.join(ROOT, "tb", "tb_fir.v")] + RTL)
     log = run(["vvp", "-n", exe])

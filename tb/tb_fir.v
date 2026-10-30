@@ -7,7 +7,7 @@ module tb_fir;
     parameter INTERP = 0;
     parameter AW = 5;
     parameter CAW = 5;
-    parameter FILE = "coef/hd_b.hex";
+    parameter FILE = "coef/hd_b.bin";
     parameter VEC = 400;
     parameter GAP = 200;
 
