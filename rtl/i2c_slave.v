@@ -1,14 +1,16 @@
 `timescale 1ns/1ps
 // I2C slave (7-bit address), standard / fast mode, oversampled on the
 // local 49.152 MHz clock. Register access with an auto-incrementing
-// pointer:
+// pointer (except the data-port register PORT on writes, so a whole
+// coefficient block streams into it in one transfer):
 //   write: S addr+W  ptr  [data data ...]  P
 //   read : S addr+W  ptr  Sr addr+R  [data ... NACK]  P
 // SCL / SDA pass a 3-FF synchronizer and a 6-sample (~120 ns) glitch
 // filter. SDA is driven only low (open drain); the slave never stretches
 // SCL.
 module i2c_slave #(
-    parameter [6:0] ADDR = 7'h5A
+    parameter [6:0] ADDR = 7'h5A,
+    parameter [7:0] PORT = 8'hFF   // data-port register: pointer does not advance on writes
 ) (
     input  wire       clk,
     input  wire       rst_n,
@@ -113,7 +115,7 @@ module i2c_slave #(
                                 wr <= 1'b1;
                                 waddr <= ptr;
                                 wdata <= sh;
-                                ptr <= ptr + 8'd1;
+                                if (ptr != PORT) ptr <= ptr + 8'd1;
                             end
                             st <= S_WACK;
                         end

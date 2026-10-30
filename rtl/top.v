@@ -12,6 +12,7 @@
 //    PCM 352.8/384 ->           /2 hd_b ---+
 //    PCM 705.6/768 -> /2 hd_a -> /2 hd_b --+
 //    DSD64..512 / DoP -> CIC5 -> /2 dsd ----+
+//    ASRC -> fade -> 10-band biquad EQ per channel (room correction) -> TX
 //
 // Everything except bclk_rx and the FIFO write side runs on the local
 // MCLK. The input clock never reaches the output: it only clocks data in.
@@ -411,15 +412,47 @@ module top #(
             hl <= a_yl; hr <= a_yr;
         end
     end
+    // ---------------- room-correction EQ (192 kHz, after the ASRC) ----------------
+    // Runs once per output frame on the faded ASRC sample (fade BEFORE the
+    // EQ: start / stop of a stream enters the filters smoothly, so a
+    // subsonic high-pass or a deep LF section cannot ring on the start
+    // transient). One frame of latency; nsec = 0 (reset default) is a
+    // bit-exact bypass.
     wire signed [43:0] gl = hl * $signed({1'b0, gain});
     wire signed [43:0] gr = hr * $signed({1'b0, gain});
+    reg  signed [31:0] fdl, fdr;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            fdl <= 32'sd0; fdr <= 32'sd0;
+        end else if (fpos == 8'd255) begin
+            fdl <= gl[41:10];
+            fdr <= gr[41:10];
+        end
+    end
+    wire signed [31:0] eq_l, eq_r;
+    wire        eq_done, eq_clip, eq_pend, eq_bank;
+    wire [3:0]  eq_nsec;
+    reg         eq_we, eq_apply;
+    reg  [6:0]  eq_idx, eq_widx;
+    reg  [31:0] eq_wdat;
+    reg  [23:0] eq_sh;
+    reg  [1:0]  eq_bc;
+    reg  [3:0]  eq_nsec_new;
+    eq_biquad #(.NS(10)) u_eq (
+        .clk(clk), .rst_n(rst_n), .clr(cst == C_IDLE), .start(fpos == 8'd0),
+        .in_l(fdl), .in_r(fdr), .out_l(eq_l), .out_r(eq_r),
+        .done(eq_done), .clip(eq_clip),
+        .cw_we(eq_we), .cw_idx(eq_widx), .cw_data(eq_wdat),
+        .apply_req(eq_apply), .nsec_new(eq_nsec_new),
+        .apply_pend(eq_pend), .bank(eq_bank), .nsec(eq_nsec));
+
     reg  signed [31:0] ol, orr;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             ol <= 32'sd0; orr <= 32'sd0;
         end else if (fpos == 8'd255) begin
-            ol <= gl[41:10];
-            orr <= gr[41:10];
+            ol <= eq_l;
+            orr <= eq_r;
         end
     end
 
@@ -445,13 +478,22 @@ module top #(
     // 0x07 ATT     rw  [3:0] PCM headroom 0..12 x 0.5 dB (0..6 dB)
     // 0x08 CLIP    r   [0] saturation within the last ~85 ms, [7] sticky
     //              w   any value clears the sticky bit
+    // 0x09 EQ_CTRL r   [0] apply pending, [1] active bank, [7:4] active
+    //                  section count;  w [0] = 1: apply (swap banks at the
+    //                  next frame, new section count takes effect)
+    // 0x0A EQ_NSEC rw  section count for the next apply (0..10, 0 = bypass)
+    // 0x0B EQ_IDX  rw  coefficient word index 0..99 (sec*10 + ch*5 + k,
+    //                  k = b0 b1 b2 a1 a2); writing it restarts the byte count
+    // 0x0C EQ_DATA w   coefficient bytes, MSB first, 4 per word, into the
+    //                  INACTIVE bank; the index advances per word. The I2C
+    //                  pointer stays on 0x0C, so a block streams in one write.
     wire       sda_oe;
     wire [7:0] i2c_ptr, i2c_waddr, i2c_wdata;
     wire       i2c_wr;
     reg  [7:0] i2c_rd;
     reg  [7:0] rate_code;
     assign i2c_sda = sda_oe ? 1'b0 : 1'bz;
-    i2c_slave #(.ADDR(I2C_ADDR)) u_i2c (
+    i2c_slave #(.ADDR(I2C_ADDR), .PORT(8'h0C)) u_i2c (
         .clk(clk), .rst_n(rst_n), .scl_in(i2c_scl), .sda_in(i2c_sda),
         .sda_oe(sda_oe), .ptr(i2c_ptr), .rdata(i2c_rd),
         .wr(i2c_wr), .waddr(i2c_waddr), .wdata(i2c_wdata));
@@ -467,9 +509,36 @@ module top #(
         end
     end
 
+    // EQ coefficient port
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            eq_we <= 1'b0; eq_apply <= 1'b0; eq_idx <= 7'd0; eq_widx <= 7'd0;
+            eq_wdat <= 32'd0; eq_sh <= 24'd0; eq_bc <= 2'd0; eq_nsec_new <= 4'd0;
+        end else begin
+            eq_we <= 1'b0;
+            eq_apply <= 1'b0;
+            if (i2c_wr) case (i2c_waddr)
+                8'h09: eq_apply <= i2c_wdata[0];
+                8'h0A: eq_nsec_new <= (i2c_wdata[3:0] > 4'd10) ? 4'd10 : i2c_wdata[3:0];
+                8'h0B: begin eq_idx <= i2c_wdata[6:0]; eq_bc <= 2'd0; end
+                8'h0C: begin
+                    if (eq_bc == 2'd3) begin
+                        eq_we <= 1'b1;
+                        eq_widx <= eq_idx;
+                        eq_wdat <= {eq_sh, i2c_wdata};
+                        eq_idx <= eq_idx + 7'd1;
+                    end else
+                        eq_sh <= {eq_sh[15:0], i2c_wdata};
+                    eq_bc <= eq_bc + 2'd1;
+                end
+                default: ;
+            endcase
+        end
+    end
+
     // saturation anywhere in the chain (only while audio is passed)
     wire       clip_now = (cst == C_RUN) &&
-                          (clp_a | clp_b | clp_c | clp_d | clp_f | clp_s);
+                          (clp_a | clp_b | clp_c | clp_d | clp_f | clp_s | eq_clip);
     reg [21:0] clip_tmr;
     reg        clip_sticky;
     always @(posedge clk or negedge rst_n) begin
@@ -499,9 +568,12 @@ module top #(
             8'h03: i2c_rd = rate_code;
             8'h04: i2c_rd = {5'd0, a_gear};
             8'h05: i2c_rd = 8'hA5;
-            8'h06: i2c_rd = 8'h03;
+            8'h06: i2c_rd = 8'h04;
             8'h07: i2c_rd = {4'd0, ctl_att};
             8'h08: i2c_rd = {clip_sticky, 6'd0, clip_tmr != 22'd0};
+            8'h09: i2c_rd = {eq_nsec, 2'd0, eq_bank, eq_pend};
+            8'h0A: i2c_rd = {4'd0, eq_nsec_new};
+            8'h0B: i2c_rd = {1'b0, eq_idx};
             default: i2c_rd = 8'h00;
         endcase
     end

@@ -2,14 +2,14 @@ SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 
 RTL := rtl/mem.v rtl/afifo.v rtl/in_mux.v rtl/bclk_rx.v rtl/rate_mon.v rtl/dop_det.v \
-       rtl/cic5_dsd.v rtl/fir_stage.v rtl/asrc.v rtl/i2s_tx32.v rtl/i2c_slave.v rtl/top.v
+       rtl/cic5_dsd.v rtl/fir_stage.v rtl/asrc.v rtl/i2s_tx32.v rtl/i2c_slave.v rtl/eq_biquad.v rtl/top.v
 
-.PHONY: all verify coef units sys switch mux clip recover lint synth jf jf_audio clean
+.PHONY: all verify coef units eq eqsys sys switch mux clip recover lint synth jf jf_audio clean
 
 all: verify
 
 # Everything that must be green before flashing.
-verify: coef lint units synth sys switch mux clip recover
+verify: coef lint units eq synth sys switch mux clip recover eqsys
 
 coef:
 	python3 tools/gen_coefs.py --check
@@ -21,6 +21,16 @@ lint:
 # Bit-exact unit benches: every FIR configuration and the CIC at all R.
 units:
 	python3 tb/run_units.py
+
+# EQ block: bit-exact vs model (live bank swap, saturation), fixed-point
+# precision vs float64, coefficient quantisation.
+eq:
+	python3 tb/run_eq.py
+
+# EQ through the whole bridge: coefficients loaded over I2C, levels at
+# the test tones must follow the designed response.
+eqsys:
+	python3 tb/run_sys.py --eq
 
 # System benches: 10 PCM rates, DSD64..512, DoP64..256 with clock offsets,
 # output decoded from the I2S pins, THD+N / level / frequency checked.
@@ -52,13 +62,13 @@ recover:
 	grep -q "PASS tb_recover" build/recover.log
 
 # Elaboration gate (the real synthesis is Gowin IDE):
-# 12 multipliers, 14 inferred memories (13 BSRAM + headroom gain ROM), no errors.
+# 13 multipliers, 15 inferred memories (14 BSRAM + headroom gain ROM), no errors.
 synth:
 	mkdir -p build
 	yosys -p "read_verilog $(RTL); hierarchy -check -top top; proc; opt -fast; memory -nomap; opt -fast; flatten; stat" > build/synth.log
 	! grep -iE "error" build/synth.log
-	grep -E -q '[$$]mul +12$$' build/synth.log
-	grep -E -q '[$$]mem_v2 +14$$' build/synth.log
+	grep -E -q '[$$]mul +13$$' build/synth.log
+	grep -E -q '[$$]mem_v2 +15$$' build/synth.log
 
 # ---- jitter_fifo (standalone module, not yet wired into top) ----
 JF = jitter_fifo/rtl/jitter_fifo.v jitter_fifo/tb/tb_jitter_fifo.v

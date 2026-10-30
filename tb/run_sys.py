@@ -262,7 +262,49 @@ def run_clip():
               f"R {ar:6.2f} dBFS (exp {exp_r:6.2f}) THD+N {tr:6.1f}")
     return ok
 
+def run_eq():
+    """EQ loaded over I2C into the running bridge: the tone levels must
+    follow the designed response, then a live bypass restores -1 dBFS."""
+    sys.path.insert(0, os.path.join(ROOT, "tools"))
+    import eq_coefs as E
+    fl, fr, ppm = 997.0, 7003.0, -31.0
+    L = [E.rbj("PK", 1000, -6, 2), E.rbj("LS", 100, 3, 0.7)]
+    R = [E.rbj("PK", 7000, -3.5, 1.5), E.rbj("HP", 20, 0, 0.707)]
+    n, w = E.words(L, R)
+    data = E.i2c_bytes(n, w)[1][1]
+    with open(os.path.join(B, "eqsys_b1.hex"), "w") as f:
+        for b in data:
+            f.write("%02x\n" % b)
+    exe = os.path.join(B, "eqsys.vvp")
+    r = subprocess.run(["iverilog", "-g2005", "-o", exe, "-s", "tb_eqsys",
+                        f"-Ptb_eqsys.NB1={len(data)}", f"-Ptb_eqsys.NS1={n}",
+                        os.path.join(ROOT, "tb", "tb_eqsys.v"),
+                        os.path.join(ROOT, "tb", "tb_src.v")] + RTL,
+                       cwd=ROOT, capture_output=True, text=True)
+    if r.returncode:
+        print(r.stdout, r.stderr)
+        return False
+    r = subprocess.run(["vvp", "-n", exe], cwd=ROOT, capture_output=True, text=True)
+    print(r.stdout)
+    ok = "PASS tb_eqsys" in r.stdout
+    q = lambda secs: [[v / E.ONE for v in E.quantise(c)] for c in secs]
+    for seg, (sl, sr) in ((0, (q(L), q(R))), (1, ([], []))):
+        d = np.loadtxt(os.path.join(B, f"eqsys_seg{seg}.txt"), ndmin=2) / 2.0 ** 31
+        res = []
+        for ch, f0, secs in ((0, fl, sl), (1, fr, sr)):
+            fexp = f0 * (1 + ppm * 1e-6)
+            exp = -1.0 + 20 * np.log10(E.response(secs, fexp)) if secs else -1.0
+            fpk, amp, thdn = analyse(d[:, ch], fexp)
+            c = abs(fpk - fexp) < 0.5 and abs(amp - exp) < 0.05 and thdn < -110
+            ok &= c
+            res.append(f"{'LR'[ch]} {amp:6.2f} dBFS (exp {exp:6.2f}) THD+N {thdn:6.1f}")
+        print(f"{'PASS' if ok else 'FAIL'} eq seg{seg} ({'EQ on' if seg == 0 else 'bypass'}): "
+              + " | ".join(res))
+    return ok
+
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["--eq"]:
+        sys.exit(0 if run_eq() else 1)
     if sys.argv[1:2] == ["--clip"]:
         sys.exit(0 if run_clip() else 1)
     if sys.argv[1:2] == ["--mux"]:
