@@ -9,6 +9,12 @@ HDMI с PCM, DoP и нативным DSD,
 по I2C с STM32. Клок транспорта до выхода не доходит: он только
 вдвигает данные, дальше работает настоящий асинхронный SRC с цифровым PLL.
 
+Связь с прошивкой усилителя (STM32H523, [DigiD-D2](https://github.com/DrModd/DigiD-D2)) и
+стримером ([DigiFox2](https://github.com/DrModd/DigiFox2)) — договор в
+[`INTERFACES.md` репозитория DigiD-D2](https://github.com/DrModd/DigiD-D2/blob/main/INTERFACES.md):
+сигналы, регистры I2C, загрузка эквалайзера. При изменении регистров правится и он.
+Драйвер хоста для эквалайзера — `Core/Src/ax_eq.c` там же.
+
 RTL написан заново (сохранена только раскладка пинов и измеренная ppy2
 перестановка L/R в DSD-режиме PureFox).
 
