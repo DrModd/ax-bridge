@@ -24,7 +24,7 @@ module cic5_dsd (
     output reg               out_valid,
     output reg signed [23:0] out_l,
     output reg signed [23:0] out_r,
-    output reg               ovf        // input queue overflow (sticky)
+    output reg               ovf        // input queue overflow (sticky until clr)
 );
     // 4-deep input queue
     reg [31:0] q0, q1, q2, q3;
@@ -76,6 +76,7 @@ module cic5_dsd (
             dec <= 7'd0;
             out_valid <= 1'b0; out_l <= 24'sd0; out_r <= 24'sd0; ovf <= 1'b0;
         end else if (clr) begin
+            ovf <= 1'b0;                  // sticky only within one session
             qn <= 3'd0; bits <= 5'd0; dec <= 7'd0; out_valid <= 1'b0;
             cst <= 3'd0; snap <= 1'b0;
             il1 <= 0; il2 <= 0; il3 <= 0; il4 <= 0; il5 <= 0;

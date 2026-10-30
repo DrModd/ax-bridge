@@ -95,6 +95,7 @@ module fir_stage #(
             out_valid <= 1'b0; out_l <= 24'sd0; out_r <= 24'sd0; ovf <= 1'b0;
             clip <= 1'b0;
         end else if (clr) begin
+            ovf <= 1'b0;                  // sticky only within one session
             qn <= 3'd0; st <= S_IDLE; ph <= 1'b0; we <= 1'b0;
             v1 <= 1'b0; v2 <= 1'b0; fin <= 1'b0; out_valid <= 1'b0;
         end else begin

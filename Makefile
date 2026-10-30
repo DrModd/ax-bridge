@@ -4,12 +4,12 @@ SHELL := /bin/bash
 RTL := rtl/mem.v rtl/afifo.v rtl/in_mux.v rtl/bclk_rx.v rtl/rate_mon.v rtl/dop_det.v \
        rtl/cic5_dsd.v rtl/fir_stage.v rtl/asrc.v rtl/i2s_tx32.v rtl/i2c_slave.v rtl/top.v
 
-.PHONY: all verify coef units sys switch mux clip lint synth jf jf_audio clean
+.PHONY: all verify coef units sys switch mux clip recover lint synth jf jf_audio clean
 
 all: verify
 
 # Everything that must be green before flashing.
-verify: coef lint units synth sys switch mux clip
+verify: coef lint units synth sys switch mux clip recover
 
 coef:
 	python3 tools/gen_coefs.py --check
@@ -42,6 +42,14 @@ mux:
 # without headroom and pass cleanly with 3.5 dB.
 clip:
 	python3 tb/run_sys.py --clip
+
+# Recovery and switch ordering: a single forced stage overflow must not
+# block audio; the input mux may only move under an established reset.
+recover:
+	mkdir -p build
+	iverilog -g2005 -Wall -s tb_recover -o build/recover.vvp tb/tb_recover.v tb/tb_src.v $(RTL)
+	vvp -n build/recover.vvp | tee build/recover.log
+	grep -q "PASS tb_recover" build/recover.log
 
 # Elaboration gate (the real synthesis is Gowin IDE):
 # 12 multipliers, 14 inferred memories (13 BSRAM + headroom gain ROM), no errors.

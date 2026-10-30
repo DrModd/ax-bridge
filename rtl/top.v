@@ -47,8 +47,14 @@ module top #(
     wire rst_n = &por;
 
     // ---------------- input selector ----------------
-    // sel_cur changes only inside a hold window: front end in reset.
+    // sel_cur changes only in the middle of a hold window, when the front
+    // end (bclk_rx, both FIFO sides) has been in reset for ~1000 MCLK:
+    //   request -> hold_cnt = 2047, sel_pend = 1 (hold rises next clock)
+    //   hold_cnt == 1024 -> sel_cur <= ctl_sel (mux flips under reset)
+    //   hold_cnt == 0    -> reset released (bclk_rx via its synchroniser)
+    // so a glitch on the switched bit clock can never reach live logic.
     reg  [1:0]  sel_cur;
+    reg         sel_pend;
     reg  [10:0] hold_cnt;
     reg         hold;                      // registered: clean async reset
     always @(posedge clk or negedge rst_n) begin
@@ -325,10 +331,14 @@ module top #(
             cst <= C_IDLE; path <= P_X1; cfg_k <= 3'd0; cfg_fam48 <= 1'b0;
             cfg_dsd <= 1'b0; cfg_dop <= 1'b0; seq_seen <= 1'b0; fresh <= 2'd0;
             tmo <= 25'd0; gain <= 11'd0;
-            sel_cur <= 2'd0; hold_cnt <= 11'd0;
+            sel_cur <= 2'd0; sel_pend <= 1'b0; hold_cnt <= 11'd0;
         end else begin
             if (hold_cnt != 11'd0)
                 hold_cnt <= hold_cnt - 11'd1;
+            if (sel_pend && hold_cnt == 11'd1024) begin
+                sel_cur <= ctl_sel;          // front end is in reset here
+                sel_pend <= 1'b0;
+            end
             case (cst)
                 C_IDLE: begin
                     gain <= 11'd0;
@@ -336,12 +346,12 @@ module top #(
                         seq_seen <= rm_seq;
                         if (fresh != 2'd2) fresh <= fresh + 2'd1;
                     end
-                    if (sw_req) begin
-                        // switch input: front end held in reset ~42 us
-                        sel_cur <= ctl_sel;
+                    if (sw_req && !sel_pend) begin
+                        // switch input: reset first, flip the mux later
+                        sel_pend <= 1'b1;
                         hold_cnt <= 11'd2047;
                         fresh <= 2'd0;
-                    end else if (hold_cnt != 11'd0) begin
+                    end else if (sel_pend || hold_cnt != 11'd0) begin
                         fresh <= 2'd0;
                     end else if (fresh == 2'd2 && cls_ok && !ctl_mute) begin
                         path <= cls_path;
