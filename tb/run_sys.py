@@ -262,6 +262,48 @@ def run_clip():
               f"R {ar:6.2f} dBFS (exp {exp_r:6.2f}) THD+N {tr:6.1f}")
     return ok
 
+def run_hdmi():
+    """HDMI input: native DSD with automatic detection / flag / L-R order,
+    and a PCM input with auto-detect on that must stay PCM."""
+    import shutil
+    cache = os.path.join(B, "dsd_2822400.hex")
+    if not os.path.exists(cache):
+        nb = int(2822400 * 0.2) // 16 * 16
+        bl, br = make_dsd(2822400.0, nb, 997.0, 3001.0)
+        write_dsd_hex(bl, br, cache)
+    shutil.copy(cache, os.path.join(B, "dsd.hex"))
+    n = sum(1 for _ in open(cache))
+    exe = os.path.join(B, "hdmi.vvp")
+    r = subprocess.run(["iverilog", "-g2005", "-o", exe, "-s", "tb_hdmi",
+                        f"-Ptb_hdmi.DSDN={n}", os.path.join(ROOT, "tb", "tb_hdmi.v"),
+                        os.path.join(ROOT, "tb", "tb_src.v")] + RTL,
+                       cwd=ROOT, capture_output=True, text=True)
+    if r.returncode:
+        print(r.stdout, r.stderr)
+        return False
+    r = subprocess.run(["vvp", "-n", exe], cwd=ROOT, capture_output=True, text=True)
+    print(r.stdout)
+    ok = "PASS tb_hdmi" in r.stdout
+    segs = [  # seg, ppm, fl, fr, level, limit, what
+        (0, -45.0, 1499.0, 5003.0, -1.0, -110.0, "in2 PCM 96, auto on"),
+        (1, -27.0, 997.0, 3001.0, -6.02, -100.0, "in3 DSD64 auto"),
+        (2, -27.0, 3001.0, 997.0, -6.02, -100.0, "in3 DSD64 L/R swapped"),
+        (3, -27.0, 997.0, 3001.0, -6.02, -100.0, "in3 DSD64 flag"),
+    ]
+    for seg, ppm, fl, fr, lvl, lim, what in segs:
+        d = np.loadtxt(os.path.join(B, f"hdmi_seg{seg}.txt"), ndmin=2) / 2.0 ** 31
+        d = d[1200:] if seg != 2 else d
+        res = []
+        c = True
+        for ch, f0 in ((0, fl), (1, fr)):
+            fexp = f0 * (1 + ppm * 1e-6)
+            fpk, amp, thdn = analyse(d[:, ch], fexp)
+            c &= abs(fpk - fexp) < 1.0 and abs(amp - lvl) < 0.1 and thdn < lim
+            res.append(f"{'LR'[ch]} f {fpk:9.3f} {amp:6.2f} dBFS THD+N {thdn:6.1f}")
+        ok &= c
+        print(f"{'PASS' if c else 'FAIL'} hdmi seg{seg} {what:22s}: " + " | ".join(res))
+    return ok
+
 def run_eq():
     """EQ loaded over I2C into the running bridge: the tone levels must
     follow the designed response, then a live bypass restores -1 dBFS."""
@@ -303,6 +345,8 @@ def run_eq():
     return ok
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["--hdmi"]:
+        sys.exit(0 if run_hdmi() else 1)
     if sys.argv[1:2] == ["--eq"]:
         sys.exit(0 if run_eq() else 1)
     if sys.argv[1:2] == ["--clip"]:

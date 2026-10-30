@@ -27,7 +27,7 @@ IO_PORT "i2s_sdata_in" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
 IO_LOC "dsd_on" G11;
 IO_PORT "dsd_on" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
 
-// ---- inputs 1..3: I2S PCM (AK4118A, Bluetooth, HDMI, ...) ----
+// ---- inputs 1..3: I2S PCM (AK4118A, Bluetooth); input 3 = HDMI, also DSD ----
 IO_LOC "in1_bclk" C10;
 IO_PORT "in1_bclk" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
 IO_LOC "in1_lrck" D10;
@@ -48,6 +48,10 @@ IO_LOC "in3_lrck" G5;
 IO_PORT "in3_lrck" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
 IO_LOC "in3_sdata" G7;
 IO_PORT "in3_sdata" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+// HDMI receiver DSD flag (optional: without it the DSD is auto-detected).
+// core J1 pin 52 (freed by moving the outputs to J2). Polarity and use: I2C 0x0D / 0x0E.
+IO_LOC "in3_dsd" E11;
+IO_PORT "in3_dsd" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
 
 // ---- I2C slave (0x5A) on the STM32 bus; external pull-ups on the bus ----
 IO_LOC "i2c_scl" G8;

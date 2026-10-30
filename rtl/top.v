@@ -1,7 +1,8 @@
 `timescale 1ns/1ps
 // AX5689 input bridge (Tang Primer 25K, GW5A-LV25MG121NC1/I0).
 //
-//   4 inputs: 0 = Fox (PCM/DoP/DSD), 1..3 = I2S PCM (any own clocks)
+//   4 inputs: 0 = Fox (PCM/DoP/DSD), 1..2 = I2S PCM, 3 = HDMI (PCM/DoP/DSD:
+//   flag pin and/or automatic DSD detection), each on its own clocks
 //            |  BCLK, LRCK/DATA2, SDATA/DATA1, DSD_ON (input 0)
 //            v                                         local 49.152 MHz
 //   [in_mux] -> [bclk_rx] -- async FIFO -->  rate_mon / DoP   [i2s_tx32] -> AX5689
@@ -20,7 +21,7 @@
 module top #(
     parameter WBITS = 18,      // rate_mon window 2^WBITS MCLK
     parameter GSH   = 0,       // DPLL gear length shift (sim only)
-    parameter DSD_SDATA_IS_RIGHT = 1,
+    parameter DSD_SDATA_IS_RIGHT = 1,   // input 0 (Fox) DSD channel order after reset
     parameter USE_DCS = 0,
     parameter [6:0] I2C_ADDR = 7'h5A,
     parameter [3:0] ATT_DEFAULT = 4'd0,  // PCM headroom after reset, 0.5 dB steps
@@ -40,6 +41,7 @@ module top #(
     input  wire in1_bclk, in1_lrck, in1_sdata,   // inputs 1..3: I2S PCM
     input  wire in2_bclk, in2_lrck, in2_sdata,
     input  wire in3_bclk, in3_lrck, in3_sdata,
+    input  wire in3_dsd,        //   input 3 (HDMI) native-DSD flag (optional)
     input  wire i2c_scl,
     inout  wire i2c_sda,
     output wire i2s_bclk_out,
@@ -71,15 +73,19 @@ module top #(
     end
     wire rst_in_n = rst_n & ~hold;
 
-    wire m_bclk, m_lrck, m_sdata, m_dsd;
+    wire m_bclk, m_lrck, m_sdata, m_dsd, m_dauto, m_drs;
+    reg  [7:0] ctl_dmode;     // I2C 0x0D
+    reg  [3:0] ctl_dinv, ctl_dswap;   // I2C 0x0E
     wire [3:0] in_active;
     in_mux #(.USE_DCS(USE_DCS)) u_mux (
         .clk(clk), .rst_n(rst_n), .sel(sel_cur),
         .bclk_in({in3_bclk, in2_bclk, in1_bclk, i2s_bclk_in}),
         .lrck_in({in3_lrck, in2_lrck, in1_lrck, i2s_lrck_in}),
         .sdata_in({in3_sdata, in2_sdata, in1_sdata, i2s_sdata_in}),
-        .dsd_on0(dsd_on),
+        .dsd_on0(dsd_on), .dsd_on3(in3_dsd),
+        .dsd_mode(ctl_dmode), .dsd_inv(ctl_dinv), .dsd_swap(ctl_dswap),
         .bclk(m_bclk), .lrck(m_lrck), .sdata(m_sdata), .dsd_on(m_dsd),
+        .dsd_auto(m_dauto), .dsd_rs(m_drs),
         .active(in_active)
     );
 
@@ -92,9 +98,9 @@ module top #(
     // ---------------- input clock domain ----------------
     wire        rx_we;
     wire [64:0] rx_wd;
-    bclk_rx #(.SDATA_IS_RIGHT(DSD_SDATA_IS_RIGHT)) u_rx (
+    bclk_rx u_rx (
         .bclk(m_bclk), .rst_n(rst_b[1]),
-        .lrck(m_lrck), .sdata(m_sdata), .dsd_on(m_dsd),
+        .lrck(m_lrck), .sdata(m_sdata), .dsd_on(m_dsd), .auto(m_dauto), .rs(m_drs),
         .wr_en(rx_we), .wr_data(rx_wd)
     );
 
@@ -487,6 +493,11 @@ module top #(
     // 0x0C EQ_DATA w   coefficient bytes, MSB first, 4 per word, into the
     //                  INACTIVE bank; the index advances per word. The I2C
     //                  pointer stays on 0x0C, so a block streams in one write.
+    // 0x0D DSD_MODE rw  2 bits per input (in0 [1:0] .. in3 [7:6]): bit 0 = DSD
+    //                  flag pin (in0: dsd_on, in3: in3_dsd), bit 1 = automatic
+    //                  DSD detection; reset 0xC1 (Fox: pin, HDMI: pin + auto)
+    // 0x0E DSD_CFG rw  [3:0] per input: DSD RIGHT on SDATA (1) / on LRCK (0),
+    //                  [7:4] flag pin active low; reset 0x0E | DSD_SDATA_IS_RIGHT
     wire       sda_oe;
     wire [7:0] i2c_ptr, i2c_waddr, i2c_wdata;
     wire       i2c_wr;
@@ -501,6 +512,13 @@ module top #(
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             ctl_sel <= 2'd0; ctl_mute <= 1'b0; ctl_att <= ATT_DEFAULT;
+            ctl_dmode <= 8'hC1; ctl_dinv <= 4'd0;
+            ctl_dswap <= {3'b111, (DSD_SDATA_IS_RIGHT != 0)};
+        end else if (i2c_wr && i2c_waddr == 8'h0D) begin
+            ctl_dmode <= i2c_wdata;
+        end else if (i2c_wr && i2c_waddr == 8'h0E) begin
+            ctl_dswap <= i2c_wdata[3:0];
+            ctl_dinv <= i2c_wdata[7:4];
         end else if (i2c_wr && i2c_waddr == 8'h00) begin
             ctl_sel <= i2c_wdata[1:0];
             ctl_mute <= i2c_wdata[7];
@@ -568,12 +586,14 @@ module top #(
             8'h03: i2c_rd = rate_code;
             8'h04: i2c_rd = {5'd0, a_gear};
             8'h05: i2c_rd = 8'hA5;
-            8'h06: i2c_rd = 8'h04;
+            8'h06: i2c_rd = 8'h05;
             8'h07: i2c_rd = {4'd0, ctl_att};
             8'h08: i2c_rd = {clip_sticky, 6'd0, clip_tmr != 22'd0};
             8'h09: i2c_rd = {eq_nsec, 2'd0, eq_bank, eq_pend};
             8'h0A: i2c_rd = {4'd0, eq_nsec_new};
             8'h0B: i2c_rd = {1'b0, eq_idx};
+            8'h0D: i2c_rd = ctl_dmode;
+            8'h0E: i2c_rd = {ctl_dinv, ctl_dswap};
             default: i2c_rd = 8'h00;
         endcase
     end

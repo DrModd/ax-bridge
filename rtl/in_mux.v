@@ -1,7 +1,14 @@
 `timescale 1ns/1ps
 // 4-input I2S / DSD selector.
 //   input 0: Fox (PCM, DoP, native DSD with dsd_on)
-//   inputs 1..3: I2S PCM (DoP is recognised downstream on any input)
+//   inputs 1..3: I2S PCM; input 3 (HDMI) also native DSD with its own
+//   flag pin and/or automatic detection. DoP is recognised downstream on
+//   any input.
+// Per-input DSD configuration (I2C, quasi-static, re-synchronised in
+// the bit-clock domain by bclk_rx):
+//   dsd_mode[2i+1:2i]: bit 0 = use the flag pin, bit 1 = auto-detect
+//   dsd_inv[i]:  flag pin active low
+//   dsd_swap[i]: 1 = RIGHT on SDATA, LEFT on LRCK (PureFox / Amanero)
 // 'sel' comes from the local MCLK domain and only changes while the
 // controller holds the whole input front end (bclk_rx + FIFO write side)
 // in reset, so a glitch on the muxed bit clock at the switch instant is
@@ -22,11 +29,17 @@ module in_mux #(
     input  wire [3:0] bclk_in,
     input  wire [3:0] lrck_in,
     input  wire [3:0] sdata_in,
-    input  wire       dsd_on0,     // input 0 only
+    input  wire       dsd_on0,     // flag pin, input 0 (Fox)
+    input  wire       dsd_on3,     // flag pin, input 3 (HDMI)
+    input  wire [7:0] dsd_mode,
+    input  wire [3:0] dsd_inv,
+    input  wire [3:0] dsd_swap,
     output wire       bclk,
     output wire       lrck,
     output wire       sdata,
-    output wire       dsd_on,
+    output wire       dsd_on,      // selected flag (polarity applied, gated)
+    output wire       dsd_auto,    // auto-detect enabled for the selected input
+    output wire       dsd_rs,      // RIGHT on SDATA for the selected input
     output reg  [3:0] active
 );
     generate
@@ -43,7 +56,11 @@ module in_mux #(
     endgenerate
     assign lrck   = lrck_in[sel];
     assign sdata  = sdata_in[sel];
-    assign dsd_on = (sel == 2'd0) & dsd_on0;
+    wire [3:0] flag = {dsd_on3, 1'b0, 1'b0, dsd_on0} ^ dsd_inv;
+    wire [1:0] mode = dsd_mode[2 * sel +: 2];
+    assign dsd_on   = mode[0] & flag[sel];
+    assign dsd_auto = mode[1];
+    assign dsd_rs   = dsd_swap[sel];
 
     // activity: any LRCK edge within 2^19 MCLK
     reg [3:0] s1, s2, s3;

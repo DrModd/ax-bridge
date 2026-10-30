@@ -29,7 +29,7 @@ module tb_mux;
         .i2s_bclk_in(b0), .i2s_lrck_in(l0), .i2s_sdata_in(d0), .dsd_on(dsd0),
         .in1_bclk(b1), .in1_lrck(l1), .in1_sdata(d1),
         .in2_bclk(b2), .in2_lrck(l2), .in2_sdata(d2),
-        .in3_bclk(b3), .in3_lrck(l3), .in3_sdata(d3),
+        .in3_bclk(b3), .in3_lrck(l3), .in3_sdata(d3), .in3_dsd(1'b0),
         .i2c_scl(scl_m), .i2c_sda(i2c_sda),
         .i2s_bclk_out(obclk), .i2s_lrck_out(olrck), .i2s_sdata_out(osdata),
         .audio_on(audio_on));
@@ -146,7 +146,7 @@ module tb_mux;
     initial begin
         #(5e6);
         rd_regs(8'h05, r0, r1, r2, r3);
-        check(r0, 8'hA5, "ID"); check(r1, 8'h04, "VERSION");
+        check(r0, 8'hA5, "ID"); check(r1, 8'h05, "VERSION");
         // input 0 (default): DSD64
         wait_on(60.0);
         rd_regs(8'h00, r0, r1, r2, r3);

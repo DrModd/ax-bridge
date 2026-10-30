@@ -24,7 +24,7 @@ module tb_eqsys;
         .i2s_bclk_in(b0), .i2s_lrck_in(l0), .i2s_sdata_in(d0), .dsd_on(dsd0),
         .in1_bclk(1'b0), .in1_lrck(1'b0), .in1_sdata(1'b0),
         .in2_bclk(1'b0), .in2_lrck(1'b0), .in2_sdata(1'b0),
-        .in3_bclk(1'b0), .in3_lrck(1'b0), .in3_sdata(1'b0),
+        .in3_bclk(1'b0), .in3_lrck(1'b0), .in3_sdata(1'b0), .in3_dsd(1'b0),
         .i2c_scl(scl_m), .i2c_sda(i2c_sda),
         .i2s_bclk_out(obclk), .i2s_lrck_out(olrck), .i2s_sdata_out(osdata),
         .audio_on(audio_on));
@@ -159,7 +159,7 @@ module tb_eqsys;
         $readmemh("build/eqsys_b1.hex", blk);
         #(2e6);
         rd_regs(8'h05, r0, r1, r2, r3);
-        check(r0, 8'hA5, "ID"); check(r1, 8'h04, "VERSION");
+        check(r0, 8'hA5, "ID"); check(r1, 8'h05, "VERSION");
         rd_regs(8'h09, r0, r1, r2, r3);
         check(r0, 8'h00, "EQ_CTRL");
         wr_block(NB1);
