@@ -22,7 +22,14 @@ module top #(
     parameter DSD_SDATA_IS_RIGHT = 1,
     parameter USE_DCS = 0,
     parameter [6:0] I2C_ADDR = 7'h5A,
-    parameter [3:0] ATT_DEFAULT = 4'd0   // PCM headroom after reset, 0.5 dB steps
+    parameter [3:0] ATT_DEFAULT = 4'd0,  // PCM headroom after reset, 0.5 dB steps
+    // Folder with the filter coefficient tables (coef/*.hex), read by
+    // $readmemh at synthesis. Gowin IDE copies the sources into its own
+    // project folder and does not find a relative path: put the FULL path
+    // here, with forward slashes and a trailing slash, e.g.
+    //   parameter COEF_DIR = "C:/ax-bridge/coef/"
+    // If the synthesis log shows "Cannot open file", this path is wrong.
+    parameter COEF_DIR = "coef/"
 ) (
     input  wire mclk_in,        // 49.152 MHz local oscillator
     input  wire i2s_bclk_in,    // input 0 (Fox): BCLK / DSD bit clock
@@ -249,25 +256,25 @@ module top #(
     wire ovf_a, ovf_b, ovf_c, ovf_d, ovf_e, ovf_f;
     wire clp_a, clp_b, clp_c, clp_d, clp_f, clp_s;
 
-    fir_stage #(.N(175), .INTERP(1), .AW(7), .CAW(8), .FILE("coef/hb_a.hex")) u_hba (
+    fir_stage #(.N(175), .INTERP(1), .AW(7), .CAW(8), .FILE({COEF_DIR, "hb_a.hex"})) u_hba (
         .clk(clk), .rst_n(rst_n), .clr(stg_clr),
         .in_valid(pcm_feed && path == P_X4), .in_l(pl), .in_r(pr),
         .out_valid(hba_v), .out_l(hba_l), .out_r(hba_r), .ovf(ovf_a), .clip(clp_a));
 
     wire hbb_in = (path == P_X4) ? hba_v : (pcm_feed && path == P_X2);
-    fir_stage #(.N(91), .INTERP(1), .AW(6), .CAW(7), .FILE("coef/hb_b.hex")) u_hbb (
+    fir_stage #(.N(91), .INTERP(1), .AW(6), .CAW(7), .FILE({COEF_DIR, "hb_b.hex"})) u_hbb (
         .clk(clk), .rst_n(rst_n), .clr(stg_clr),
         .in_valid(hbb_in),
         .in_l(path == P_X4 ? hba_l : pl), .in_r(path == P_X4 ? hba_r : pr),
         .out_valid(hbb_v), .out_l(hbb_l), .out_r(hbb_r), .ovf(ovf_b), .clip(clp_b));
 
-    fir_stage #(.N(23), .INTERP(0), .AW(5), .CAW(5), .FILE("coef/hd_a.hex")) u_hda (
+    fir_stage #(.N(23), .INTERP(0), .AW(5), .CAW(5), .FILE({COEF_DIR, "hd_a.hex"})) u_hda (
         .clk(clk), .rst_n(rst_n), .clr(stg_clr),
         .in_valid(pcm_feed && path == P_D4), .in_l(pl), .in_r(pr),
         .out_valid(hda_v), .out_l(hda_l), .out_r(hda_r), .ovf(ovf_c), .clip(clp_c));
 
     wire hdb_in = (path == P_D4) ? hda_v : (pcm_feed && path == P_D2);
-    fir_stage #(.N(31), .INTERP(0), .AW(5), .CAW(5), .FILE("coef/hd_b.hex")) u_hdb (
+    fir_stage #(.N(31), .INTERP(0), .AW(5), .CAW(5), .FILE({COEF_DIR, "hd_b.hex"})) u_hdb (
         .clk(clk), .rst_n(rst_n), .clr(stg_clr),
         .in_valid(hdb_in),
         .in_l(path == P_D4 ? hda_l : pl), .in_r(path == P_D4 ? hda_r : pr),
@@ -284,7 +291,7 @@ module top #(
         .in_valid(cic_in), .in_l(ch_l), .in_r(ch_r),
         .out_valid(cic_v), .out_l(cic_l), .out_r(cic_r), .ovf(ovf_e));
 
-    fir_stage #(.N(95), .INTERP(0), .AW(7), .CAW(7), .FILE("coef/dsd.hex")) u_dsf (
+    fir_stage #(.N(95), .INTERP(0), .AW(7), .CAW(7), .FILE({COEF_DIR, "dsd.hex"})) u_dsf (
         .clk(clk), .rst_n(rst_n), .clr(stg_clr),
         .in_valid(cic_v), .in_l(cic_l), .in_r(cic_r),
         .out_valid(dsf_v), .out_l(dsf_l), .out_r(dsf_r), .ovf(ovf_f), .clip(clp_f));
@@ -308,7 +315,7 @@ module top #(
     wire [2:0] a_gear;
     wire signed [31:0] a_yl, a_yr;
     wire signed [47:0] a_e;
-    asrc #(.GSH(GSH), .FILE("coef/asrc.hex")) u_asrc (
+    asrc #(.GSH(GSH), .FILE({COEF_DIR, "asrc.hex"})) u_asrc (
         .clk(clk), .rst_n(rst_n), .clr(stg_clr), .fam48(cfg_fam48),
         .arm(running), .in_valid(iv), .in_l(il), .in_r(ir),
         .ev(ev), .fpos(fpos),
