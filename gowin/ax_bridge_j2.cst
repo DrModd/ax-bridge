@@ -1,0 +1,70 @@
+// Tang Primer 25K (GW5A-LV25MG121NC1/I0) - AX5689 input bridge.
+// VARIANT J2: all inputs, I2C on core connector J1; master clock and the
+// AX5689 outputs on core connector J2, away from the input lines.
+//   MCLK F2 (GCLKT, bank 5, no configuration function)   J2 pin 7
+//   AX5689 BCLK L2 / LRCK L1 / DATA K1, audio_on K2       J2 pins 6/8/10/12
+// Bank 2 (L1, L2, K1, K2) is powered from VCCIO2/3 = J2 pins 2 and 4:
+// on your own carrier board feed them 3.3 V. On the Dock these pins are on
+// the 40-pin header (silkscreen F2, L2, L1, K1, K2).
+// The selected input BCLK is muxed in fabric and promoted to a global
+// net, so input BCLKs need no GCLK pin.
+
+// local 49.152 MHz oscillator (also feeds the AX5689 MCLK on your board)
+IO_LOC "mclk_in" F2;
+IO_PORT "mclk_in" IO_TYPE=LVCMOS33 PULL_MODE=NONE BANK_VCCIO=3.3;
+
+// ---- input 0: Fox (Luckfox, I2S/DSD master) ----
+IO_LOC "i2s_bclk_in" H5;
+IO_PORT "i2s_bclk_in" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
+IO_LOC "i2s_lrck_in" D11;
+IO_PORT "i2s_lrck_in" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
+IO_LOC "i2s_sdata_in" B11;
+IO_PORT "i2s_sdata_in" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
+// Amanero-style native-DSD flag. Pull-down: PCM when undriven.
+IO_LOC "dsd_on" G11;
+IO_PORT "dsd_on" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
+// ---- inputs 1..3: I2S PCM (AK4118A, Bluetooth, HDMI, ...) ----
+IO_LOC "in1_bclk" C10;
+IO_PORT "in1_bclk" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+IO_LOC "in1_lrck" D10;
+IO_PORT "in1_lrck" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+IO_LOC "in1_sdata" B10;
+IO_PORT "in1_sdata" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
+IO_LOC "in2_bclk" E10;
+IO_PORT "in2_bclk" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+IO_LOC "in2_lrck" G10;
+IO_PORT "in2_lrck" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+IO_LOC "in2_sdata" L11;
+IO_PORT "in2_sdata" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
+IO_LOC "in3_bclk" F5;
+IO_PORT "in3_bclk" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+IO_LOC "in3_lrck" G5;
+IO_PORT "in3_lrck" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+IO_LOC "in3_sdata" G7;
+IO_PORT "in3_sdata" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
+// ---- I2C slave (0x5A) on the STM32 bus; external pull-ups on the bus ----
+IO_LOC "i2c_scl" G8;
+IO_PORT "i2c_scl" IO_TYPE=LVCMOS33 PULL_MODE=UP BANK_VCCIO=3.3;
+IO_LOC "i2c_sda" H8;
+IO_PORT "i2c_sda" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8 BANK_VCCIO=3.3;
+
+// ---- to the AX5689: I2S 192 kHz / 32-bit, master ----
+IO_LOC "i2s_bclk_out" L2;
+IO_PORT "i2s_bclk_out" IO_TYPE=LVCMOS33 DRIVE=8 BANK_VCCIO=3.3;
+
+IO_LOC "i2s_lrck_out" L1;
+IO_PORT "i2s_lrck_out" IO_TYPE=LVCMOS33 DRIVE=8 BANK_VCCIO=3.3;
+
+IO_LOC "i2s_sdata_out" K1;
+IO_PORT "i2s_sdata_out" IO_TYPE=LVCMOS33 DRIVE=8 BANK_VCCIO=3.3;
+
+// high while audio is passed (locked and unmuted) - to the STM32
+IO_LOC "audio_on" K2;
+IO_PORT "audio_on" IO_TYPE=LVCMOS33 DRIVE=4 BANK_VCCIO=3.3;
