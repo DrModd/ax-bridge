@@ -4,12 +4,12 @@ SHELL := /bin/bash
 RTL := rtl/mem.v rtl/afifo.v rtl/in_mux.v rtl/bclk_rx.v rtl/rate_mon.v rtl/dop_det.v \
        rtl/cic5_dsd.v rtl/fir_stage.v rtl/asrc.v rtl/i2s_tx32.v rtl/i2c_slave.v rtl/eq_biquad.v rtl/top.v
 
-.PHONY: all verify coef units eq eqsys sys switch mux clip recover lint synth jf jf_audio clean
+.PHONY: all verify coef units eq eqsys hdmi sys switch mux clip recover lint synth jf jf_audio clean
 
 all: verify
 
 # Everything that must be green before flashing.
-verify: coef lint units eq synth sys switch mux clip recover eqsys
+verify: coef lint units eq synth sys switch mux clip recover eqsys hdmi
 
 coef:
 	python3 tools/gen_coefs.py --check
@@ -31,6 +31,11 @@ eq:
 # the test tones must follow the designed response.
 eqsys:
 	python3 tb/run_sys.py --eq
+
+# HDMI input: native DSD64 auto-detected (no flag), L/R order, flag-only
+# mode and active-low flag; a PCM input with auto-detect must stay PCM.
+hdmi:
+	python3 tb/run_sys.py --hdmi
 
 # System benches: 10 PCM rates, DSD64..512, DoP64..256 with clock offsets,
 # output decoded from the I2S pins, THD+N / level / frequency checked.
