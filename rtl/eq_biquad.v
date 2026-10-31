@@ -115,10 +115,6 @@ module eq_biquad #(
             o_d <= 32'sd0; p_v <= 1'b0; p_first <= 1'b0; p_sub <= 1'b0;
             prod <= 64'sd0; acc <= 67'sd0;
             apply_pend <= 1'b0; bank <= 1'b0; nsec <= 4'd0;
-            for (i = 0; i < NJ; i = i + 1) begin
-                sx1[i] <= 32'sd0; sx2[i] <= 32'sd0; sy1[i] <= 32'sd0; sy2[i] <= 32'sd0;
-                se1[i] <= 29'd0; se2[i] <= 29'd0;
-            end
         end else begin
             done <= 1'b0;
             clip <= 1'b0;
@@ -138,14 +134,6 @@ module eq_biquad #(
                     // job result: next sample in the cascade, rotate chain
                     if (jch) cur_r <= ys; else cur_l <= ys;
                     if (yhi | ylo) clip <= 1'b1;
-                    for (i = 0; i < NJ - 1; i = i + 1) begin
-                        sx1[i] <= sx1[i + 1]; sx2[i] <= sx2[i + 1];
-                        sy1[i] <= sy1[i + 1]; sy2[i] <= sy2[i + 1];
-                        se1[i] <= se1[i + 1]; se2[i] <= se2[i + 1];
-                    end
-                    sx1[NJ - 1] <= x0;      sx2[NJ - 1] <= sx1[0];
-                    sy1[NJ - 1] <= ys;      sy2[NJ - 1] <= sy1[0];
-                    se1[NJ - 1] <= ye;      se2[NJ - 1] <= se1[0];
                     ph <= 4'd0;
                     if (job == NJ - 1) begin
                         busy <= 1'b0;
@@ -176,11 +164,37 @@ module eq_biquad #(
                 cur_l <= 32'sd0; cur_r <= 32'sd0;
                 out_l <= 32'sd0; out_r <= 32'sd0;
                 busy <= 1'b0; ph <= 4'd0; job <= 5'd0;
-                for (i = 0; i < NJ; i = i + 1) begin
-                    sx1[i] <= 32'sd0; sx2[i] <= 32'sd0; sy1[i] <= 32'sd0; sy2[i] <= 32'sd0;
-                    se1[i] <= 29'd0; se2[i] <= 29'd0;
-                end
             end
+        end
+    end
+
+    // Section state chain: plain registers with a synchronous clear and a
+    // clock enable (no asynchronous reset), so clr and the rotate map onto
+    // the flip-flops' own reset / enable pins instead of ~3.7k LUTs.
+    // Power-up content is cleared by the top level (clr is held while idle);
+    // the initial block only keeps simulation free of X.
+    wire rot = busy && (ph == 4'd8);
+    integer c;
+    initial
+        for (c = 0; c < NJ; c = c + 1) begin
+            sx1[c] = 32'sd0; sx2[c] = 32'sd0; sy1[c] = 32'sd0; sy2[c] = 32'sd0;
+            se1[c] = 29'd0; se2[c] = 29'd0;
+        end
+    always @(posedge clk) begin
+        if (clr) begin
+            for (c = 0; c < NJ; c = c + 1) begin
+                sx1[c] <= 32'sd0; sx2[c] <= 32'sd0; sy1[c] <= 32'sd0; sy2[c] <= 32'sd0;
+                se1[c] <= 29'd0; se2[c] <= 29'd0;
+            end
+        end else if (rot) begin
+            for (c = 0; c < NJ - 1; c = c + 1) begin
+                sx1[c] <= sx1[c + 1]; sx2[c] <= sx2[c + 1];
+                sy1[c] <= sy1[c + 1]; sy2[c] <= sy2[c + 1];
+                se1[c] <= se1[c + 1]; se2[c] <= se2[c + 1];
+            end
+            sx1[NJ - 1] <= x0;      sx2[NJ - 1] <= sx1[0];
+            sy1[NJ - 1] <= ys;      sy2[NJ - 1] <= sy1[0];
+            se1[NJ - 1] <= ye;      se2[NJ - 1] <= se1[0];
         end
     end
 endmodule
