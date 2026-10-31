@@ -49,6 +49,14 @@ module bclk_rx (
     reg [4:0] ad_short;       // short gaps in the window (sat 16)
     reg [7:0] ad_long;        // consecutive long gaps (sat 128)
     reg       ad_dsd;
+    // The decision includes the interval that ends at the current edge (the
+    // 64th edge of a window counts), and the first interval after reset or
+    // enable (ad_gap = 0, length unknown) is neither short nor long.
+    wire       ad_short_i = (ad_gap != 5'd0) && (ad_gap < 5'd8);
+    wire       ad_long_i  = (ad_gap >= 5'd16);
+    wire [4:0] ad_short_n = (ad_short_i && ad_short != 5'd16) ? ad_short + 5'd1 : ad_short;
+    wire [7:0] ad_long_n  = !ad_long_i ? 8'd0 :
+                            (ad_long != 8'd128) ? ad_long + 8'd1 : ad_long;
     always @(posedge bclk or negedge rst_n) begin
         if (!rst_n) begin
             ad_lq <= 1'b0; ad_gap <= 5'd0; ad_edges <= 6'd0; ad_short <= 5'd0;
@@ -61,16 +69,10 @@ module bclk_rx (
             if (lrck != ad_lq) begin
                 ad_gap <= 5'd1;
                 ad_edges <= ad_edges + 6'd1;
-                if (ad_edges == 6'd63) ad_short <= 5'd0;
-                if (ad_gap < 5'd8) begin
-                    ad_long <= 8'd0;
-                    if (ad_edges != 6'd63 && ad_short != 5'd16) ad_short <= ad_short + 5'd1;
-                end else if (ad_gap >= 5'd16) begin
-                    if (ad_long != 8'd128) ad_long <= ad_long + 8'd1;
-                end else
-                    ad_long <= 8'd0;
-                if (ad_short == 5'd16) ad_dsd <= 1'b1;
-                if (ad_long == 8'd128) ad_dsd <= 1'b0;
+                ad_short <= (ad_edges == 6'd63) ? 5'd0 : ad_short_n;   // window of 64 edges
+                ad_long <= ad_long_n;
+                if (ad_short_n == 5'd16) ad_dsd <= 1'b1;
+                if (ad_long_n == 8'd128) ad_dsd <= 1'b0;
             end else if (ad_gap != 5'd31)
                 ad_gap <= ad_gap + 5'd1;
         end

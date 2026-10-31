@@ -4,12 +4,12 @@ SHELL := /bin/bash
 RTL := rtl/mem.v rtl/afifo.v rtl/in_mux.v rtl/bclk_rx.v rtl/rate_mon.v rtl/dop_det.v \
        rtl/cic5_dsd.v rtl/fir_stage.v rtl/asrc.v rtl/i2s_tx32.v rtl/i2c_slave.v rtl/eq_biquad.v rtl/top.v
 
-.PHONY: all verify coef units eq eqsys hdmi sys switch mux clip recover lint synth jf jf_audio clean
+.PHONY: all verify coef units eq eqsys hdmi corner sys switch mux clip recover lint synth jf jf_audio clean
 
 all: verify
 
 # Everything that must be green before flashing.
-verify: coef lint units eq synth sys switch mux clip recover eqsys hdmi
+verify: coef lint units eq corner synth sys switch mux clip recover eqsys hdmi
 
 coef:
 	python3 tools/gen_coefs.py --check
@@ -21,6 +21,18 @@ lint:
 # Bit-exact unit benches: every FIR configuration and the CIC at all R.
 units:
 	python3 tb/run_units.py
+
+# Corner cases: clr in the middle of an ASRC convolution must not publish
+# a stale sample; the DSD auto-detector must count the 64th edge of its
+# window (all 64 alignments), never take PCM for DSD, and return to PCM.
+corner:
+	mkdir -p build
+	iverilog -g2005 -Wall -s tb_asrc_clr -o build/asrc_clr.vvp tb/tb_asrc_clr.v rtl/mem.v rtl/asrc.v
+	vvp -n build/asrc_clr.vvp | tee build/asrc_clr.log
+	grep -q "PASS tb_asrc_clr" build/asrc_clr.log
+	iverilog -g2005 -Wall -s tb_dsd_det -o build/dsd_det.vvp tb/tb_dsd_det.v rtl/bclk_rx.v
+	vvp -n build/dsd_det.vvp | tee build/dsd_det.log
+	grep -q "PASS tb_dsd_det" build/dsd_det.log
 
 # EQ block: bit-exact vs model (live bank swap, saturation), fixed-point
 # precision vs float64, coefficient quantisation.

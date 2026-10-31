@@ -238,6 +238,14 @@ module asrc #(
             a3v <= 1'b0; a3f <= 1'b0; a3l <= 1'b0; a3c <= 1'b0;
             prod3 <= 50'sd0; acc <= 56'sd0; fin <= 1'b0; finc <= 1'b0;
             y_valid <= 1'b0; y_l <= 32'sd0; y_r <= 32'sd0; clip <= 1'b0;
+        end else if (clr) begin
+            // Flush the MAC pipeline together with the DPLL: a convolution
+            // begun before clr must not publish its result (or a clip pulse)
+            // into the next acquisition. (Same fix as DrModd/ax-bridgeGPT.)
+            issuing <= 1'b0; j <= 6'd0; ech <= 1'b0;
+            a1v <= 1'b0; a2v <= 1'b0; a3v <= 1'b0;
+            fin <= 1'b0; y_valid <= 1'b0; clip <= 1'b0;
+            y_l <= 32'sd0; y_r <= 32'sd0;
         end else begin
             y_valid <= 1'b0;
             if (eng_go) begin
