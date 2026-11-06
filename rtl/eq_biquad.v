@@ -56,12 +56,12 @@ module eq_biquad #(
         .raddr({bank, ca}), .rdata(cdata));
 
     // ---------------- section state chain ----------------
-    reg signed [31:0] sx1 [0:NJ-1];
-    reg signed [31:0] sx2 [0:NJ-1];
-    reg signed [31:0] sy1 [0:NJ-1];
-    reg signed [31:0] sy2 [0:NJ-1];
-    reg        [28:0] se1 [0:NJ-1];
-    reg        [28:0] se2 [0:NJ-1];
+    reg signed [31:0] sx1 [0:NJ-1] /* synthesis syn_srlstyle = "registers" */;
+    reg signed [31:0] sx2 [0:NJ-1] /* synthesis syn_srlstyle = "registers" */;
+    reg signed [31:0] sy1 [0:NJ-1] /* synthesis syn_srlstyle = "registers" */;
+    reg signed [31:0] sy2 [0:NJ-1] /* synthesis syn_srlstyle = "registers" */;
+    reg        [28:0] se1 [0:NJ-1] /* synthesis syn_srlstyle = "registers" */;
+    reg        [28:0] se2 [0:NJ-1] /* synthesis syn_srlstyle = "registers" */;
 
     reg signed [31:0] cur_l, cur_r;   // running sample through the cascade
 
@@ -168,7 +168,9 @@ module eq_biquad #(
         end
     end
 
-    // Section state chain: plain registers with a synchronous clear and a
+    // Section state chain: plain registers (syn_srlstyle: GowinSynthesis
+    // otherwise packs the rotate into BSRAM shift registers in a write mode
+    // GW5A-25B does not support, PA2122) with a synchronous clear and a
     // clock enable (no asynchronous reset), so clr and the rotate map onto
     // the flip-flops' own reset / enable pins instead of ~3.7k LUTs.
     // Power-up content is cleared by the top level (clr is held while idle);
