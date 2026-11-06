@@ -160,7 +160,7 @@ module tb_eqsys;
         $readmemh("build/eqsys_b1.hex", blk);
         #(2e6);
         rd_regs(8'h05, r0, r1, r2, r3);
-        check(r0, 8'hA5, "ID"); check(r1, 8'h06, "VERSION");
+        check(r0, 8'hA5, "ID"); check(r1, 8'h07, "VERSION");
         rd_regs(8'h09, r0, r1, r2, r3);
         check(r0, 8'h00, "EQ_CTRL");
         wr_block(NB1);

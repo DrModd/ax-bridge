@@ -160,7 +160,7 @@ module tb_hdmi;
     initial begin
         #(3e6);
         rd_regs(8'h05, r0, r1, r2, r3);
-        check(r0, 8'hA5, "ID"); check(r1, 8'h06, "VERSION");
+        check(r0, 8'hA5, "ID"); check(r1, 8'h07, "VERSION");
         rd_regs(8'h0D, r0, r1, r2, r3);
         check(r0, 8'hC1, "DSD_MODE"); check(r1, 8'h0F, "DSD_CFG");
         // in2: PCM with auto-detect on
