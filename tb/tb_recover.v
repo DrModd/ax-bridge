@@ -16,8 +16,10 @@ module tb_recover;
     wire b0, l0, d0, x0, b1, l1, d1, x1, b2, l2, d2, x2;
     tb_src #(.MODE(0), .FS(96000.0), .PPM(-45.0), .FL(2003.0), .FR(7001.0),
              .T0(333.3)) s0 (.en(1'b1), .bclk(b0), .lrck(l0), .sdata(d0), .dsd_on(x0));
-    tb_src #(.MODE(0), .FS(44100.0), .PPM(60.0), .FL(1499.0), .FR(5003.0),
-             .T0(777.7)) s1 (.en(1'b1), .bclk(b1), .lrck(l1), .sdata(d1), .dsd_on(x1));
+    // input 1: S/PDIF on line 0 (coax), 44.1 kHz, with jitter and duty distortion
+    wire sp1;
+    tb_spdif_src #(.FS(44100.0), .PPM(60.0), .FL(1499.0), .FR(5003.0), .JIT(3.0), .DUTY(5.0),
+                   .T0(777.7)) s1 (.en(1'b1), .line(sp1));
     tb_src #(.MODE(0), .FS(192000.0), .PPM(13.0), .FL(997.0), .FR(3001.0),
              .T0(111.1)) s2 (.en(1'b1), .bclk(b2), .lrck(l2), .sdata(d2), .dsd_on(x2));
 
@@ -26,7 +28,7 @@ module tb_recover;
     top #(.WBITS(16), .GSH(4)) dut (
         .mclk_in(mclk),
         .i2s_bclk_in(b0), .i2s_lrck_in(l0), .i2s_sdata_in(d0), .dsd_on(1'b0),
-        .in1_bclk(b1), .in1_lrck(l1), .in1_sdata(d1),
+        .spdif_in({3'b000, sp1}),
         .in2_bclk(b2), .in2_lrck(l2), .in2_sdata(d2),
         .in3_bclk(1'b0), .in3_lrck(1'b0), .in3_sdata(1'b0), .in3_dsd(1'b0),
         .in4_bclk(1'b0), .in4_lrck(1'b0), .in4_sdata(1'b0),

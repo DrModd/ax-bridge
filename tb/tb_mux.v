@@ -1,6 +1,6 @@
 `timescale 1ns/1fs
 // Input switch + I2C bench. Five transports run at the same time on
-// unrelated clocks:  in0 DSD64 (Fox, native), in1 PCM 44.1, in2 PCM 96,
+// unrelated clocks:  in0 DSD64 (Fox, native), in1 S/PDIF 44.1, in2 PCM 96,
 // in3 silent, in4 PCM 192 (phono / line ADC, own crystal). An I2C master (400 kHz) selects inputs and reads the
 // status registers. Each selected input is captured to
 // build/mux_seg<N>.txt for frequency / level / THD+N analysis
@@ -14,8 +14,10 @@ module tb_mux;
     wire b4, l4, d4, x4;
     tb_src #(.MODE(1), .FS(2822400.0), .PPM(31.0), .FL(997.0), .FR(3001.0),
              .DSDN(DSDN), .T0(1234.5)) s0 (.en(1'b1), .bclk(b0), .lrck(l0), .sdata(d0), .dsd_on(dsd0));
-    tb_src #(.MODE(0), .FS(44100.0), .PPM(60.0), .FL(1499.0), .FR(5003.0),
-             .T0(777.7)) s1 (.en(1'b1), .bclk(b1), .lrck(l1), .sdata(d1), .dsd_on(x1));
+    // input 1: S/PDIF on line 0 (coax), 44.1 kHz, with jitter and duty distortion
+    wire sp1;
+    tb_spdif_src #(.FS(44100.0), .PPM(60.0), .FL(1499.0), .FR(5003.0), .JIT(3.0), .DUTY(5.0),
+                   .T0(777.7)) s1 (.en(1'b1), .line(sp1));
     tb_src #(.MODE(0), .FS(96000.0), .PPM(-45.0), .FL(2003.0), .FR(7001.0),
              .T0(333.3)) s2 (.en(1'b1), .bclk(b2), .lrck(l2), .sdata(d2), .dsd_on(x2));
     tb_src #(.MODE(0), .FS(48000.0), .PPM(0.0)) s3 (.en(1'b0), .bclk(b3), .lrck(l3), .sdata(d3), .dsd_on(x3));
@@ -30,7 +32,7 @@ module tb_mux;
     top #(.WBITS(16), .GSH(4)) dut (
         .mclk_in(mclk),
         .i2s_bclk_in(b0), .i2s_lrck_in(l0), .i2s_sdata_in(d0), .dsd_on(dsd0),
-        .in1_bclk(b1), .in1_lrck(l1), .in1_sdata(d1),
+        .spdif_in({3'b000, sp1}),
         .in2_bclk(b2), .in2_lrck(l2), .in2_sdata(d2),
         .in3_bclk(b3), .in3_lrck(l3), .in3_sdata(d3), .in3_dsd(1'b0),
         .in4_bclk(b4), .in4_lrck(l4), .in4_sdata(d4),
@@ -156,7 +158,7 @@ module tb_mux;
         rd_regs(8'h00, r0, r1, r2, r3);
         check(r0, 8'h00, "CTRL"); check(r1, 8'h73, "STATUS"); check(r3, 8'h11, "RATE");
         capture(0, 4096);
-        // input 1: PCM 44.1
+        // input 1: S/PDIF 44.1 (coax line)
         wr_reg(8'h00, 8'h01);
         #(20000);
         if (audio_on) begin $display("ERROR: audio still on after switch"); errors = errors + 1; end

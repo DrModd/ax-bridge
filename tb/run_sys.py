@@ -197,7 +197,7 @@ def run_mux():
     exe = os.path.join(B, "mux.vvp")
     r = subprocess.run(["iverilog", "-g2005", "-o", exe, "-s", "tb_mux",
                         f"-Ptb_mux.DSDN={n}", os.path.join(ROOT, "tb", "tb_mux.v"),
-                        os.path.join(ROOT, "tb", "tb_src.v")] + RTL,
+                        os.path.join(ROOT, "tb", "tb_src.v"), os.path.join(ROOT, "tb", "tb_spdif_src.v")] + RTL,
                        cwd=ROOT, capture_output=True, text=True)
     if r.returncode:
         print(r.stdout, r.stderr)
@@ -223,6 +223,40 @@ def run_mux():
             ok &= c
             res.append(f"{'LR'[ch]} f {fpk:9.3f} (exp {fexp:9.3f}) {amp:6.2f} dBFS THD+N {thdn:6.1f}")
         print(f"{'PASS' if ok else 'FAIL'} mux seg{seg}: " + " | ".join(res))
+    return ok
+
+def run_spdif():
+    """S/PDIF receiver: four lines (192k jitter + duty distortion, 96k
+    optical-like distortion, 48k, non-audio ARC), line switching, status."""
+    exe = os.path.join(B, "spdif.vvp")
+    r = subprocess.run(["iverilog", "-g2005", "-o", exe, "-s", "tb_spdif",
+                        os.path.join(ROOT, "tb", "tb_spdif.v"),
+                        os.path.join(ROOT, "tb", "tb_spdif_src.v")] + RTL,
+                       cwd=ROOT, capture_output=True, text=True)
+    if r.returncode:
+        print(r.stdout, r.stderr)
+        return False
+    r = subprocess.run(["vvp", "-n", exe], cwd=ROOT, capture_output=True, text=True)
+    print(r.stdout)
+    ok = "PASS tb_spdif" in r.stdout
+    segs = [  # seg, ppm, fl, fr, level, limit, what
+        (0, 35.0, 1201.0, 4001.0, -1.0, -110.0, "coax 192k"),
+        (1, -80.0, 997.0, 3001.0, -1.0, -110.0, "optical 96k"),
+        (2, 12.0, 1499.0, 5003.0, -1.0, -110.0, "AES 48k"),
+        (3, 35.0, 1201.0, 4001.0, -1.0, -110.0, "coax 192k again"),
+    ]
+    for seg, ppm, fl, fr, lvl, lim, what in segs:
+        d = np.loadtxt(os.path.join(B, f"spdif_seg{seg}.txt"), ndmin=2) / 2.0 ** 31
+        d = d[1200:]
+        res = []
+        c = True
+        for ch, f0 in ((0, fl), (1, fr)):
+            fexp = f0 * (1 + ppm * 1e-6)
+            fpk, amp, thdn = analyse(d[:, ch], fexp)
+            c &= abs(fpk - fexp) < 1.0 and abs(amp - lvl) < 0.1 and thdn < lim
+            res.append(f"{'LR'[ch]} f {fpk:9.3f} {amp:6.2f} dBFS THD+N {thdn:6.1f}")
+        ok &= c
+        print(f"{'PASS' if c else 'FAIL'} spdif seg{seg} {what:16s}: " + " | ".join(res))
     return ok
 
 def run_clip():
@@ -277,7 +311,7 @@ def run_hdmi():
     exe = os.path.join(B, "hdmi.vvp")
     r = subprocess.run(["iverilog", "-g2005", "-o", exe, "-s", "tb_hdmi",
                         f"-Ptb_hdmi.DSDN={n}", os.path.join(ROOT, "tb", "tb_hdmi.v"),
-                        os.path.join(ROOT, "tb", "tb_src.v")] + RTL,
+                        os.path.join(ROOT, "tb", "tb_src.v"), os.path.join(ROOT, "tb", "tb_spdif_src.v")] + RTL,
                        cwd=ROOT, capture_output=True, text=True)
     if r.returncode:
         print(r.stdout, r.stderr)
@@ -322,7 +356,7 @@ def run_eq():
     r = subprocess.run(["iverilog", "-g2005", "-o", exe, "-s", "tb_eqsys",
                         f"-Ptb_eqsys.NB1={len(data)}", f"-Ptb_eqsys.NS1={n}",
                         os.path.join(ROOT, "tb", "tb_eqsys.v"),
-                        os.path.join(ROOT, "tb", "tb_src.v")] + RTL,
+                        os.path.join(ROOT, "tb", "tb_src.v"), os.path.join(ROOT, "tb", "tb_spdif_src.v")] + RTL,
                        cwd=ROOT, capture_output=True, text=True)
     if r.returncode:
         print(r.stdout, r.stderr)
@@ -352,6 +386,8 @@ if __name__ == "__main__":
         sys.exit(0 if run_eq() else 1)
     if sys.argv[1:2] == ["--clip"]:
         sys.exit(0 if run_clip() else 1)
+    if sys.argv[1:2] == ["--spdif"]:
+        sys.exit(0 if run_spdif() else 1)
     if sys.argv[1:2] == ["--mux"]:
         sys.exit(0 if run_mux() else 1)
     if sys.argv[1:2] == ["--switch"]:

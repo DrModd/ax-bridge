@@ -1,0 +1,237 @@
+`timescale 1ns/1ps
+// S/PDIF / AES3 receiver (IEC 60958), runs entirely on the local MCLK.
+// Replaces the AK4118A: four lines (coax, optical, AES/EBU, HDMI ARC),
+// one decoded at a time. 44.1..192 kHz, 16..24-bit PCM.
+//
+// Sampling: every line is sampled on both MCLK edges (98.304 MS/s with
+// MCLK = 49.152 MHz); the negedge sample is moved to the posedge domain,
+// so the decoder gets two samples per clock, oldest first. At 192 kHz a
+// biphase half-cell (1T) is 4 samples, a preamble pulse (3T) 12.
+//
+// Pulse classifier: the longest pulse of each polarity in a window of 256
+// pulses is a preamble pulse (3T; B, M and W preambles contain 3T pulses
+// of both polarities). Pulse-width distortion (optical receivers stretch
+// one level and shorten the other by D) shifts the two maxima by +D / -D,
+// so their sum S = Mh + Ml = 6T is distortion-free, and a pulse of a
+// level whose maximum is M (= 3T +- D) is classified around that level's
+// own grid:
+//   4L <  4M - S      -> 1T   (L < M - 1.5T)
+//   12L < 12M - S     -> 2T   (L < M - 0.5T)
+//   12L < 12M + S     -> 3T   (L < M + 0.5T), longer -> error
+// No rate table; at 192 kHz this takes +-15 ns of duty distortion plus
+// jitter with 98 MS/s sampling.
+//
+// Subframe: preamble B/M (left; B = block start) or W (right) as pulse
+// patterns 3-1-1-3 / 3-3-1-1 / 3-2-1-2, then 28 biphase cells (2T = 0,
+// 1T 1T = 1): aux[3:0], audio[19:0] (LSB first: 24-bit sample = bits
+// 4..27), V, U, C, P (even parity over bits 4..31).
+//
+// Output: one stereo frame per W subframe that follows a B/M subframe,
+// 24-bit samples left-justified in 32 bits, only while locked (16 good
+// frames in a row) and the stream is audio (channel status byte 0 bit 1
+// = 0). A frame with a parity error repeats the previous one, so the
+// sample rate seen by the ASRC never changes.
+module spdif_rx (
+    input  wire        clk,
+    input  wire        rst_n,       // held low while the input is switched
+    input  wire [3:0]  line,        // raw pins
+    input  wire [1:0]  sel,         // line select (quasi-static, changed under reset)
+    output reg         valid,       // one-clock strobe per stereo frame
+    output reg  [31:0] l,
+    output reg  [31:0] r,
+    output reg         locked,
+    output reg         nonaudio,    // channel status: not PCM (AC3, DTS, ...)
+    output reg         err,         // one-clock strobe: parity / biphase error
+    output reg  [7:0]  cs0,         // channel status byte 0
+    output reg  [7:0]  cs3          // channel status byte 3 (sample rate code)
+);
+    // ---------------- double-rate sampling ----------------
+    reg [3:0] pa, nb;
+    always @(posedge clk) pa <= line;
+    always @(negedge clk) nb <= line;
+    reg [3:0] a1, b1;                 // second synchroniser stage
+    always @(posedge clk) begin a1 <= pa; b1 <= nb; end
+    // pair at this clock: a1 (older), b1 (half a clock later)
+    reg s0, s1;
+    always @(posedge clk) begin s0 <= a1[sel]; s1 <= b1[sel]; end
+
+    // ---------------- pulse lengths (in samples) ----------------
+    reg       last;                   // level of the previous sample
+    reg [7:0] run;                    // samples since the last edge
+    reg       pv;                     // pulse strobe
+    reg [7:0] plen;
+    reg       plev;                   // level of the pulse that just ended
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            last <= 1'b0; run <= 8'd0; pv <= 1'b0; plen <= 8'd0; plev <= 1'b0;
+        end else begin
+            pv <= 1'b0;
+            last <= s1;
+            if (s0 != last && s1 == s0) begin              // edge before s0
+                pv <= 1'b1; plen <= run; run <= 8'd2; plev <= last;
+            end else if (s0 == last && s1 != s0) begin     // edge between s0 and s1
+                pv <= 1'b1; plen <= run + 8'd1; run <= 8'd1; plev <= s0;
+            end else begin                                 // no edge, or a 1-sample spike
+                if (run < 8'd254) run <= run + 8'd2;
+            end
+        end
+    end
+
+    // ---------------- classifier ----------------
+    reg [7:0] wmh, wml, mh, ml;       // window maxima / references (3T), high / low pulses
+    reg [7:0] wcnt;
+    reg       ref_ok;
+    wire [7:0] nmh = (plev && plen > wmh) ? plen : wmh;
+    wire [7:0] nml = (!plev && plen > wml) ? plen : wml;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            wmh <= 8'd0; wml <= 8'd0; mh <= 8'd0; ml <= 8'd0; wcnt <= 8'd0; ref_ok <= 1'b0;
+        end else if (run >= 8'd250) begin                  // no signal: forget the reference
+            wmh <= 8'd0; wml <= 8'd0; wcnt <= 8'd0; ref_ok <= 1'b0;
+        end else if (pv) begin
+            wcnt <= wcnt + 8'd1;
+            if (wcnt == 8'd255) begin
+                mh <= nmh; ml <= nml;
+                ref_ok <= ({1'b0, nmh} + {1'b0, nml}) >= 9'd18;   // 6T >= 18 samples (192 kHz minus jitter)
+                wmh <= 8'd0; wml <= 8'd0;
+            end else begin
+                wmh <= nmh; wml <= nml;
+            end
+        end
+    end
+    wire [12:0] S   = {5'd0, mh} + {5'd0, ml};
+    wire [12:0] M   = {5'd0, plev ? mh : ml};
+    wire [12:0] L   = {5'd0, plen};
+    wire [12:0] L4  = L << 2,  M4 = M << 2;
+    wire [12:0] L12 = (L << 3) + (L << 2), M12 = (M << 3) + (M << 2);
+    wire c1 = (L4 + S) < M4;
+    wire c2 = !c1 && ((L12 + S) < M12);
+    wire c3 = !c1 && !c2 && (L12 < M12 + S);
+    // class: 1, 2, 3; 0 = invalid
+    wire [1:0] cls = c1 ? 2'd1 : c2 ? 2'd2 : c3 ? 2'd3 : 2'd0;
+
+    // ---------------- biphase / preamble decoder ----------------
+    localparam S_HUNT = 2'd0, S_PRE = 2'd1, S_DATA = 2'd2;
+    reg [1:0]  st;
+    reg [1:0]  pn;                    // preamble pulses seen after the first 3T
+    reg [5:0]  pat;                   // classes of preamble pulses 2..4
+    reg        half;                  // first 1T of a '1' cell seen
+    reg [4:0]  nb_;                   // data bits received
+    reg [27:0] sr;
+    reg [1:0]  ptype;                 // 1 = B, 2 = M, 3 = W
+    reg        sf_v;                  // subframe complete strobe
+    reg        sf_bad;
+    reg [1:0]  sf_type;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            st <= S_HUNT; pn <= 2'd0; pat <= 6'd0; half <= 1'b0; nb_ <= 5'd0;
+            sr <= 28'd0; ptype <= 2'd0; sf_v <= 1'b0; sf_bad <= 1'b0; sf_type <= 2'd0;
+        end else begin
+            sf_v <= 1'b0;
+            if (pv && ref_ok) begin
+                case (st)
+                S_HUNT:
+                    if (cls == 2'd3) begin st <= S_PRE; pn <= 2'd0; end
+                S_PRE: begin
+                    pat <= {pat[3:0], cls};
+                    pn <= pn + 2'd1;
+                    if (pn == 2'd2) begin
+                        // pattern after the first 3T: B 1-1-3, M 3-1-1, W 2-1-2
+                        case ({pat[3:0], cls})
+                        6'b01_01_11: begin ptype <= 2'd1; st <= S_DATA; end
+                        6'b11_01_01: begin ptype <= 2'd2; st <= S_DATA; end
+                        6'b10_01_10: begin ptype <= 2'd3; st <= S_DATA; end
+                        default:     st <= S_HUNT;
+                        endcase
+                        half <= 1'b0; nb_ <= 5'd0;
+                    end
+                end
+                default: begin // S_DATA
+                    if (cls == 2'd2 && !half) begin
+                        sr <= {1'b0, sr[27:1]}; nb_ <= nb_ + 5'd1;
+                    end else if (cls == 2'd1) begin
+                        if (half) begin sr <= {1'b1, sr[27:1]}; nb_ <= nb_ + 5'd1; end
+                        half <= ~half;
+                    end else begin
+                        // 3T or invalid inside the data: lost sync
+                        sf_v <= 1'b1; sf_bad <= 1'b1; sf_type <= ptype;
+                        st <= (cls == 2'd3) ? S_PRE : S_HUNT; pn <= 2'd0;
+                    end
+                    if (nb_ == 5'd27 && ((cls == 2'd2 && !half) || (cls == 2'd1 && half))) begin
+                        sf_v <= 1'b1; sf_bad <= 1'b0; sf_type <= ptype;
+                        st <= S_HUNT;
+                    end
+                end
+                endcase
+            end else if (pv && st != S_HUNT) begin
+                st <= S_HUNT;                     // no reference yet
+            end
+        end
+    end
+
+    // ---------------- frames, channel status, lock ----------------
+    // sr after the last bit: sr[0] = bit 4 ... sr[27] = bit 31 (one clock
+    // after sf_v, the shift has landed)
+    reg        sf_d;
+    reg        sf_bad_d;
+    reg [1:0]  sf_type_d;
+    always @(posedge clk) begin sf_d <= sf_v; sf_bad_d <= sf_bad; sf_type_d <= sf_type; end
+    wire       par_ok = ~^sr;
+    wire [23:0] smp = sr[23:0];
+
+    reg [31:0] hl;                     // left sample waiting for its right
+    reg        have_l;
+    reg [31:0] cs;
+    reg [7:0]  csi;                    // channel-status bit index (left subframes)
+    reg        cs_run;
+    reg [4:0]  good;
+    reg [15:0] wd;                     // watchdog: clocks since the last good frame
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            valid <= 1'b0; l <= 32'd0; r <= 32'd0; locked <= 1'b0; nonaudio <= 1'b0;
+            err <= 1'b0; cs0 <= 8'd0; cs3 <= 8'd0;
+            hl <= 32'd0; have_l <= 1'b0; cs <= 32'd0; csi <= 8'd0; cs_run <= 1'b0;
+            good <= 5'd0; wd <= 16'd0;
+        end else begin
+            valid <= 1'b0;
+            err <= 1'b0;
+            if (wd != 16'hFFFF) wd <= wd + 16'd1;
+            if (wd == 16'hFFFF) begin locked <= 1'b0; good <= 5'd0; end   // ~1.3 ms without frames
+            if (sf_d) begin
+                if (sf_bad_d || !par_ok) begin
+                    err <= 1'b1;
+                    if (good > 5'd4) good <= good - 5'd4; else begin good <= 5'd0; locked <= 1'b0; end
+                end
+                if (sf_type_d != 2'd3) begin                   // left (B or M)
+                    if (!sf_bad_d) begin
+                        if (par_ok) hl <= {smp, 8'd0};
+                        have_l <= 1'b1;
+                        // channel status: bit n of the block from the n-th left subframe
+                        if (sf_type_d == 2'd1) begin csi <= 8'd1; cs_run <= 1'b1; cs <= {31'd0, sr[26]}; end
+                        else if (cs_run) begin
+                            if (csi < 8'd32) cs[csi[4:0]] <= sr[26];
+                            if (csi == 8'd31) begin
+                                cs0 <= cs[7:0]; cs3 <= {sr[26], cs[30:24]};
+                                nonaudio <= cs[1];
+                            end
+                            csi <= csi + 8'd1;
+                        end
+                    end else
+                        have_l <= 1'b0;
+                end else if (!sf_bad_d && have_l) begin        // right after left: a frame
+                    have_l <= 1'b0;
+                    wd <= 16'd0;
+                    if (par_ok) begin
+                        if (good != 5'd31) good <= good + 5'd1;
+                        if (good >= 5'd16) locked <= 1'b1;
+                        l <= hl;
+                        r <= {smp, 8'd0};
+                    end
+                    // parity error: l / r keep the previous frame
+                    valid <= locked && !nonaudio;
+                end else
+                    have_l <= 1'b0;
+            end
+        end
+    end
+endmodule

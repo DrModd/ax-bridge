@@ -1,15 +1,15 @@
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 
-RTL := rtl/mem.v rtl/afifo.v rtl/in_mux.v rtl/bclk_rx.v rtl/rate_mon.v rtl/dop_det.v \
+RTL := rtl/mem.v rtl/afifo.v rtl/in_mux.v rtl/bclk_rx.v rtl/spdif_rx.v rtl/rate_mon.v rtl/dop_det.v \
        rtl/cic5_dsd.v rtl/fir_stage.v rtl/asrc.v rtl/i2s_tx32.v rtl/i2c_slave.v rtl/eq_biquad.v rtl/top.v
 
-.PHONY: all verify coef units eq eqsys hdmi corner sys switch mux clip recover lint synth jf jf_audio clean
+.PHONY: all verify coef units eq eqsys hdmi spdif corner sys switch mux clip recover lint synth jf jf_audio clean
 
 all: verify
 
 # Everything that must be green before flashing.
-verify: coef lint units eq corner synth sys switch mux clip recover eqsys hdmi
+verify: coef lint units eq corner synth sys switch mux clip recover eqsys hdmi spdif
 
 coef:
 	python3 tools/gen_coefs.py --check
@@ -49,6 +49,11 @@ eqsys:
 hdmi:
 	python3 tb/run_sys.py --hdmi
 
+# S/PDIF receiver: four lines (192k with jitter and duty distortion, 96k,
+# 48k, non-audio ARC that must stay silent), line switching, status.
+spdif:
+	python3 tb/run_sys.py --spdif
+
 # System benches: 10 PCM rates, DSD64..512, DoP64..256 with clock offsets,
 # output decoded from the I2S pins, THD+N / level / frequency checked.
 # ~25-40 min with Icarus; single case: python3 tb/run_sys.py pcm44
@@ -74,7 +79,7 @@ clip:
 # block audio; the input mux may only move under an established reset.
 recover:
 	mkdir -p build
-	iverilog -g2005 -Wall -s tb_recover -o build/recover.vvp tb/tb_recover.v tb/tb_src.v $(RTL)
+	iverilog -g2005 -Wall -s tb_recover -o build/recover.vvp tb/tb_recover.v tb/tb_src.v tb/tb_spdif_src.v $(RTL)
 	vvp -n build/recover.vvp | tee build/recover.log
 	grep -q "PASS tb_recover" build/recover.log
 

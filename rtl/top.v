@@ -1,9 +1,11 @@
 `timescale 1ns/1ps
 // AX5689 input bridge (Tang Primer 25K, GW5A-LV25MG121NC1/I0).
 //
-//   5 inputs: 0 = Fox (PCM/DoP/DSD), 1..2 = I2S PCM, 3 = HDMI (PCM/DoP/DSD:
-//   flag pin and/or automatic DSD detection), 4 = phono / line ADC module
-//   (AK5572, I2S master, 192 kHz), each on its own clocks
+//   5 inputs: 0 = Fox (PCM/DoP/DSD), 1 = S/PDIF receiver (4 lines: coax,
+//   optical, AES/EBU, HDMI ARC; replaces the AK4118A), 2 = I2S PCM,
+//   3 = HDMI (PCM/DoP/DSD: flag pin and/or automatic DSD detection),
+//   4 = phono / line ADC module (AK5572, I2S master, 192 kHz), each on
+//   its own clocks
 //            |  BCLK, LRCK/DATA2, SDATA/DATA1, DSD_ON (input 0)
 //            v                                         local 49.152 MHz
 //   [in_mux] -> [bclk_rx] -- async FIFO -->  rate_mon / DoP   [i2s_tx32] -> AX5689
@@ -39,7 +41,8 @@ module top #(
     input  wire i2s_lrck_in,    //   LRCK / DSD DATA2
     input  wire i2s_sdata_in,   //   SDATA / DSD DATA1
     input  wire dsd_on,         //   Amanero-style native-DSD flag
-    input  wire in1_bclk, in1_lrck, in1_sdata,   // inputs 1..3: I2S PCM
+    input  wire [3:0] spdif_in, // input 1: S/PDIF lines 0 coax, 1 optical, 2 AES/EBU, 3 HDMI ARC
+    // inputs 2..3: I2S PCM
     input  wire in2_bclk, in2_lrck, in2_sdata,
     input  wire in3_bclk, in3_lrck, in3_sdata,
     input  wire in3_dsd,        //   input 3 (HDMI) native-DSD flag (optional)
@@ -78,17 +81,29 @@ module top #(
     wire m_bclk, m_lrck, m_sdata, m_dsd, m_dauto, m_drs;
     reg  [7:0] ctl_dmode;     // I2C 0x0D
     reg  [3:0] ctl_dinv, ctl_dswap;   // I2C 0x0E
-    wire [4:0] in_active;
+    wire [4:0] in_active, mux_active;
     in_mux #(.USE_DCS(USE_DCS)) u_mux (
         .clk(clk), .rst_n(rst_n), .sel(sel_cur),
-        .bclk_in({in4_bclk, in3_bclk, in2_bclk, in1_bclk, i2s_bclk_in}),
-        .lrck_in({in4_lrck, in3_lrck, in2_lrck, in1_lrck, i2s_lrck_in}),
-        .sdata_in({in4_sdata, in3_sdata, in2_sdata, in1_sdata, i2s_sdata_in}),
+        .bclk_in({in4_bclk, in3_bclk, in2_bclk, 1'b0, i2s_bclk_in}),   // input 1: S/PDIF, not I2S
+        .lrck_in({in4_lrck, in3_lrck, in2_lrck, 1'b0, i2s_lrck_in}),
+        .sdata_in({in4_sdata, in3_sdata, in2_sdata, 1'b0, i2s_sdata_in}),
         .dsd_on0(dsd_on), .dsd_on3(in3_dsd),
         .dsd_mode(ctl_dmode), .dsd_inv(ctl_dinv), .dsd_swap(ctl_dswap),
         .bclk(m_bclk), .lrck(m_lrck), .sdata(m_sdata), .dsd_on(m_dsd),
         .dsd_auto(m_dauto), .dsd_rs(m_drs),
-        .active(in_active)
+        .active(mux_active)
+    );
+    assign in_active = {mux_active[4:2], sp_locked, mux_active[0]};
+
+    // ---------------- input 1: S/PDIF receiver (MCLK domain) ----------------
+    reg  [1:0]  sline_cur;               // S/PDIF line, switched like the input
+    wire        sp_valid, sp_locked, sp_nonaudio, sp_err;
+    wire [31:0] sp_l, sp_r;
+    wire [7:0]  sp_cs0, sp_cs3;
+    spdif_rx u_spdif (
+        .clk(clk), .rst_n(rst_in_n), .line(spdif_in), .sel(sline_cur),
+        .valid(sp_valid), .l(sp_l), .r(sp_r), .locked(sp_locked),
+        .nonaudio(sp_nonaudio), .err(sp_err), .cs0(sp_cs0), .cs3(sp_cs3)
     );
 
     reg [1:0] rst_b;
@@ -129,7 +144,13 @@ module top #(
             f_re <= 1'b0;
             item <= 1'b0;
             if (thr != 3'd0) thr <= thr - 3'd1;
-            if (!f_empty && !f_re && thr == 3'd0) begin
+            if (sel_cur == 3'd1) begin
+                // S/PDIF frames arrive on the local clock already (<= 192 kHz)
+                if (sp_valid) begin
+                    item <= 1'b1; item_dsd <= 1'b0;
+                    item_l <= sp_l; item_r <= sp_r;
+                end
+            end else if (!f_empty && !f_re && thr == 3'd0) begin
                 f_re <= 1'b1;
                 item <= 1'b1;
                 item_dsd <= f_rd[64];
@@ -335,8 +356,9 @@ module top #(
     // ---------------- control FSM ----------------
     reg [10:0] gain;          // 0..1024
     reg  [2:0] ctl_sel;       // I2C: requested input (0..4)
+    reg  [1:0] ctl_sline;     // I2C: requested S/PDIF line
     reg        ctl_mute;      // I2C: forced mute
-    wire sw_req = (ctl_sel != sel_cur);
+    wire sw_req = (ctl_sel != sel_cur) || (ctl_sline != sline_cur);
     wire fault = a_fault | ev_bad | mode_bad | stage_ovf | sw_req | ctl_mute |
                  (rm_seq != seq_seen && (!cls_ok || cls_path != path ||
                   rm_k != cfg_k || rm_fam48 != cfg_fam48));
@@ -347,12 +369,13 @@ module top #(
             cst <= C_IDLE; path <= P_X1; cfg_k <= 3'd0; cfg_fam48 <= 1'b0;
             cfg_dsd <= 1'b0; cfg_dop <= 1'b0; seq_seen <= 1'b0; fresh <= 2'd0;
             tmo <= 25'd0; gain <= 11'd0;
-            sel_cur <= 3'd0; sel_pend <= 1'b0; hold_cnt <= 11'd0;
+            sel_cur <= 3'd0; sline_cur <= 2'd0; sel_pend <= 1'b0; hold_cnt <= 11'd0;
         end else begin
             if (hold_cnt != 11'd0)
                 hold_cnt <= hold_cnt - 11'd1;
             if (sel_pend && hold_cnt == 11'd1024) begin
                 sel_cur <= ctl_sel;          // front end is in reset here
+                sline_cur <= ctl_sline;
                 sel_pend <= 1'b0;
             end
             case (cst)
@@ -483,7 +506,7 @@ module top #(
     //                  0x21..0x23 DoP64..256 (+0x08: 48k-family DSD)
     // 0x04 PLL     r   DPLL gear (0..4)
     // 0x05 ID      r   0xA5
-    // 0x06 VERSION r   0x06
+    // 0x06 VERSION r   0x07
     // 0x07 ATT     rw  [3:0] PCM headroom 0..12 x 0.5 dB (0..6 dB)
     // 0x08 CLIP    r   [0] saturation within the last ~85 ms, [7] sticky
     //              w   any value clears the sticky bit
@@ -501,7 +524,13 @@ module top #(
     //                  DSD detection; reset 0xC1 (Fox: pin, HDMI: pin + auto)
     // 0x0E DSD_CFG rw  [3:0] per input: DSD RIGHT on SDATA (1) / on LRCK (0),
     //                  [7:4] flag pin active low; reset 0x0E | DSD_SDATA_IS_RIGHT
-    // 0x0F INPUTS  r   [4:0] inputs 0..4 with a live LRCK, [7:5] current input
+    // 0x0F INPUTS  r   [4:0] inputs 0..4 with a live LRCK (input 1: S/PDIF
+    //                  locked), [7:5] current input
+    // 0x10 SPDIF_SEL rw [1:0] S/PDIF line: 0 coax, 1 optical, 2 AES/EBU, 3 ARC
+    // 0x11 SPDIF_STAT r [0] locked, [1] not audio (channel status), [2] errors
+    //                  within ~85 ms, [7] error since the last write (w: clear)
+    // 0x12 SPDIF_CS0 r channel status byte 0
+    // 0x13 SPDIF_CS3 r channel status byte 3 (consumer: sample-rate code)
     wire       sda_oe;
     wire [7:0] i2c_ptr, i2c_waddr, i2c_wdata;
     wire       i2c_wr;
@@ -515,7 +544,7 @@ module top #(
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            ctl_sel <= 3'd0; ctl_mute <= 1'b0; ctl_att <= ATT_DEFAULT;
+            ctl_sel <= 3'd0; ctl_sline <= 2'd0; ctl_mute <= 1'b0; ctl_att <= ATT_DEFAULT;
             ctl_dmode <= 8'hC1; ctl_dinv <= 4'd0;
             ctl_dswap <= {3'b111, (DSD_SDATA_IS_RIGHT != 0)};
         end else if (i2c_wr && i2c_waddr == 8'h0D) begin
@@ -526,6 +555,8 @@ module top #(
         end else if (i2c_wr && i2c_waddr == 8'h00) begin
             ctl_sel <= (i2c_wdata[2:0] > 3'd4) ? 3'd4 : i2c_wdata[2:0];
             ctl_mute <= i2c_wdata[7];
+        end else if (i2c_wr && i2c_waddr == 8'h10) begin
+            ctl_sline <= i2c_wdata[1:0];
         end else if (i2c_wr && i2c_waddr == 8'h07) begin
             ctl_att <= (i2c_wdata[3:0] > 4'd12) ? 4'd12 : i2c_wdata[3:0];
         end
@@ -561,6 +592,20 @@ module top #(
     // saturation anywhere in the chain (only while audio is passed)
     wire       clip_now = (cst == C_RUN) &&
                           (clp_a | clp_b | clp_c | clp_d | clp_f | clp_s | eq_clip);
+    // S/PDIF error indicators (like CLIP)
+    reg [21:0] sp_err_tmr;
+    reg        sp_err_sticky;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            sp_err_tmr <= 22'd0; sp_err_sticky <= 1'b0;
+        end else begin
+            if (sp_err && sp_locked) sp_err_tmr <= {22{1'b1}};
+            else if (sp_err_tmr != 22'd0) sp_err_tmr <= sp_err_tmr - 22'd1;
+            if (sp_err && sp_locked) sp_err_sticky <= 1'b1;
+            else if (i2c_wr && i2c_waddr == 8'h11) sp_err_sticky <= 1'b0;
+        end
+    end
+
     reg [21:0] clip_tmr;
     reg        clip_sticky;
     always @(posedge clk or negedge rst_n) begin
@@ -590,7 +635,7 @@ module top #(
             8'h03: i2c_rd = rate_code;
             8'h04: i2c_rd = {5'd0, a_gear};
             8'h05: i2c_rd = 8'hA5;
-            8'h06: i2c_rd = 8'h06;
+            8'h06: i2c_rd = 8'h07;
             8'h07: i2c_rd = {4'd0, ctl_att};
             8'h08: i2c_rd = {clip_sticky, 6'd0, clip_tmr != 22'd0};
             8'h09: i2c_rd = {eq_nsec, 2'd0, eq_bank, eq_pend};
@@ -599,6 +644,10 @@ module top #(
             8'h0D: i2c_rd = ctl_dmode;
             8'h0E: i2c_rd = {ctl_dinv, ctl_dswap};
             8'h0F: i2c_rd = {sel_cur, in_active};
+            8'h10: i2c_rd = {6'd0, ctl_sline};
+            8'h11: i2c_rd = {sp_err_sticky, 4'd0, sp_err_tmr != 22'd0, sp_nonaudio, sp_locked};
+            8'h12: i2c_rd = sp_cs0;
+            8'h13: i2c_rd = sp_cs3;
             default: i2c_rd = 8'h00;
         endcase
     end

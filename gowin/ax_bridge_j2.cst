@@ -27,13 +27,19 @@ IO_PORT "i2s_sdata_in" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
 IO_LOC "dsd_on" G11;
 IO_PORT "dsd_on" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
 
-// ---- inputs 1..3: I2S PCM (AK4118A, Bluetooth); input 3 = HDMI, also DSD ----
-IO_LOC "in1_bclk" C10;
-IO_PORT "in1_bclk" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
-IO_LOC "in1_lrck" D10;
-IO_PORT "in1_lrck" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
-IO_LOC "in1_sdata" B10;
-IO_PORT "in1_sdata" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+// ---- input 1: S/PDIF; inputs 2..3: I2S PCM (Bluetooth); input 3 = HDMI, also DSD ----
+// input 1: S/PDIF receiver in the FPGA (replaces the AK4118A). Logic-level
+// lines from the input module front ends: 0 coax, 1 optical (TOSLINK
+// receiver output), 2 AES/EBU (RS-422 receiver), 3 HDMI ARC (comparator).
+IO_LOC "spdif_in[0]" C10;
+IO_PORT "spdif_in[0]" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+IO_LOC "spdif_in[1]" D10;
+IO_PORT "spdif_in[1]" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+IO_LOC "spdif_in[2]" B10;
+IO_PORT "spdif_in[2]" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+// core J1 pin 39
+IO_LOC "spdif_in[3]" H10;
+IO_PORT "spdif_in[3]" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
 
 IO_LOC "in2_bclk" E10;
 IO_PORT "in2_bclk" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;

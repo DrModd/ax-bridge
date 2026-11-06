@@ -87,7 +87,7 @@ module tb_switch;
     top #(.WBITS(16), .GSH(4)) dut (
         .mclk_in(mclk), .i2s_bclk_in(bclk), .i2s_lrck_in(lrck),
         .i2s_sdata_in(sdata), .dsd_on(dsd_on),
-        .in1_bclk(1'b0), .in1_lrck(1'b0), .in1_sdata(1'b0),
+        .spdif_in(4'b0000),
         .in2_bclk(1'b0), .in2_lrck(1'b0), .in2_sdata(1'b0),
         .in3_bclk(1'b0), .in3_lrck(1'b0), .in3_sdata(1'b0), .in3_dsd(1'b0),
         .in4_bclk(1'b0), .in4_lrck(1'b0), .in4_sdata(1'b0),

@@ -24,7 +24,7 @@ module tb_hdmi;
     top #(.WBITS(16), .GSH(4)) dut (
         .mclk_in(mclk),
         .i2s_bclk_in(1'b0), .i2s_lrck_in(1'b0), .i2s_sdata_in(1'b0), .dsd_on(1'b0),
-        .in1_bclk(1'b0), .in1_lrck(1'b0), .in1_sdata(1'b0),
+        .spdif_in(4'b0000),
         .in2_bclk(b2), .in2_lrck(l2), .in2_sdata(d2),
         .in3_bclk(b3), .in3_lrck(l3), .in3_sdata(d3), .in3_dsd(hflag),
         .in4_bclk(1'b0), .in4_lrck(1'b0), .in4_sdata(1'b0),
