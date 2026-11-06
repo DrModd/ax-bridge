@@ -53,6 +53,15 @@ IO_PORT "in3_sdata" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
 IO_LOC "in3_dsd" E11;
 IO_PORT "in3_dsd" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
 
+// ---- input 4: phono / line ADC module (AK5572, I2S master 192 kHz, PCM) ----
+// core J1 pins 33 / 35 / 37 (bank 7, VCCIO6/7 = 3.3 V)
+IO_LOC "in4_bclk" J11;
+IO_PORT "in4_bclk" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+IO_LOC "in4_lrck" J10;
+IO_PORT "in4_lrck" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+IO_LOC "in4_sdata" H11;
+IO_PORT "in4_sdata" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
 // ---- I2C slave (0x5A) on the STM32 bus; external pull-ups on the bus ----
 IO_LOC "i2c_scl" G8;
 IO_PORT "i2c_scl" IO_TYPE=LVCMOS33 PULL_MODE=UP BANK_VCCIO=3.3;

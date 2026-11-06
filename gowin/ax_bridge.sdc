@@ -1,9 +1,9 @@
 # Local audio clock: 49.152 MHz.
 create_clock -name mclk_in -period 20.345 [get_ports {mclk_in}]
 
-# Front-end clock: the selected input BCLK after the 4:1 mux (in_mux), net
+# Front-end clock: the selected input BCLK after the 5:1 mux (in_mux), net
 # m_bclk in top.v. bclk_rx and the FIFO write side run on it. Worst case
-# PCM 768 kHz x 64 = 49.152 MHz. The four BCLK pins only feed the mux, so
+# PCM 768 kHz x 64 = 49.152 MHz. The five BCLK pins only feed the mux, so
 # this one clock covers every input.
 create_clock -name m_bclk -period 20.345 [get_nets {m_bclk}]
 

@@ -1,7 +1,7 @@
 `timescale 1ns/1fs
-// Input switch + I2C bench. Four transports run at the same time on
+// Input switch + I2C bench. Five transports run at the same time on
 // unrelated clocks:  in0 DSD64 (Fox, native), in1 PCM 44.1, in2 PCM 96,
-// in3 silent. An I2C master (400 kHz) selects inputs and reads the
+// in3 silent, in4 PCM 192 (phono / line ADC, own crystal). An I2C master (400 kHz) selects inputs and reads the
 // status registers. Each selected input is captured to
 // build/mux_seg<N>.txt for frequency / level / THD+N analysis
 // (tb/run_sys.py --mux).
@@ -11,6 +11,7 @@ module tb_mux;
     always #10.1725 mclk = ~mclk;
 
     wire b0, l0, d0, dsd0, b1, l1, d1, x1, b2, l2, d2, x2, b3, l3, d3, x3;
+    wire b4, l4, d4, x4;
     tb_src #(.MODE(1), .FS(2822400.0), .PPM(31.0), .FL(997.0), .FR(3001.0),
              .DSDN(DSDN), .T0(1234.5)) s0 (.en(1'b1), .bclk(b0), .lrck(l0), .sdata(d0), .dsd_on(dsd0));
     tb_src #(.MODE(0), .FS(44100.0), .PPM(60.0), .FL(1499.0), .FR(5003.0),
@@ -18,6 +19,8 @@ module tb_mux;
     tb_src #(.MODE(0), .FS(96000.0), .PPM(-45.0), .FL(2003.0), .FR(7001.0),
              .T0(333.3)) s2 (.en(1'b1), .bclk(b2), .lrck(l2), .sdata(d2), .dsd_on(x2));
     tb_src #(.MODE(0), .FS(48000.0), .PPM(0.0)) s3 (.en(1'b0), .bclk(b3), .lrck(l3), .sdata(d3), .dsd_on(x3));
+    tb_src #(.MODE(0), .FS(192000.0), .PPM(17.0), .FL(1201.0), .FR(4001.0),
+             .T0(555.5)) s4 (.en(1'b1), .bclk(b4), .lrck(l4), .sdata(d4), .dsd_on(x4));
 
     reg  scl_m = 1'b1, sda_m = 1'b1;
     tri1 i2c_sda;
@@ -30,6 +33,7 @@ module tb_mux;
         .in1_bclk(b1), .in1_lrck(l1), .in1_sdata(d1),
         .in2_bclk(b2), .in2_lrck(l2), .in2_sdata(d2),
         .in3_bclk(b3), .in3_lrck(l3), .in3_sdata(d3), .in3_dsd(1'b0),
+        .in4_bclk(b4), .in4_lrck(l4), .in4_sdata(d4),
         .i2c_scl(scl_m), .i2c_sda(i2c_sda),
         .i2s_bclk_out(obclk), .i2s_lrck_out(olrck), .i2s_sdata_out(osdata),
         .audio_on(audio_on));
@@ -146,7 +150,7 @@ module tb_mux;
     initial begin
         #(5e6);
         rd_regs(8'h05, r0, r1, r2, r3);
-        check(r0, 8'hA5, "ID"); check(r1, 8'h05, "VERSION");
+        check(r0, 8'hA5, "ID"); check(r1, 8'h06, "VERSION");
         // input 0 (default): DSD64
         wait_on(60.0);
         rd_regs(8'h00, r0, r1, r2, r3);
@@ -172,6 +176,20 @@ module tb_mux;
         rd_regs(8'h01, r1, r2, r3, q0);
         check(r1, 8'h7C, "STATUS"); check(r3, 8'h00, "RATE");
         if (audio_on) begin $display("ERROR: audio on with a dead input"); errors = errors + 1; end
+        rd_regs(8'h0F, r0, r1, r2, r3);
+        check(r0, 8'h77, "INPUTS");          // input 3, live 0,1,2,4
+        // input 4: phono / line ADC, PCM 192
+        wr_reg(8'h00, 8'h04);
+        wait_on(60.0);
+        rd_regs(8'h00, r0, r1, r2, r3);
+        check(r0, 8'h04, "CTRL"); check(r1, 8'h73, "STATUS"); check(r3, 8'h06, "RATE");
+        rd_regs(8'h0F, r0, r1, r2, r3);
+        check(r0, 8'h97, "INPUTS");          // input 4, live 0,1,2,4
+        capture(4, 4096);
+        // out-of-range select clamps to 4
+        wr_reg(8'h00, 8'h07);
+        rd_regs(8'h00, r0, r1, r2, r3);
+        check(r0, 8'h04, "CTRL clamp");
         // mute + input 1: stays silent; unmute: plays
         wr_reg(8'h00, 8'h81);
         #(40e6);

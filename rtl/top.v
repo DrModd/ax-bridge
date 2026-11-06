@@ -1,8 +1,9 @@
 `timescale 1ns/1ps
 // AX5689 input bridge (Tang Primer 25K, GW5A-LV25MG121NC1/I0).
 //
-//   4 inputs: 0 = Fox (PCM/DoP/DSD), 1..2 = I2S PCM, 3 = HDMI (PCM/DoP/DSD:
-//   flag pin and/or automatic DSD detection), each on its own clocks
+//   5 inputs: 0 = Fox (PCM/DoP/DSD), 1..2 = I2S PCM, 3 = HDMI (PCM/DoP/DSD:
+//   flag pin and/or automatic DSD detection), 4 = phono / line ADC module
+//   (AK5572, I2S master, 192 kHz), each on its own clocks
 //            |  BCLK, LRCK/DATA2, SDATA/DATA1, DSD_ON (input 0)
 //            v                                         local 49.152 MHz
 //   [in_mux] -> [bclk_rx] -- async FIFO -->  rate_mon / DoP   [i2s_tx32] -> AX5689
@@ -42,6 +43,7 @@ module top #(
     input  wire in2_bclk, in2_lrck, in2_sdata,
     input  wire in3_bclk, in3_lrck, in3_sdata,
     input  wire in3_dsd,        //   input 3 (HDMI) native-DSD flag (optional)
+    input  wire in4_bclk, in4_lrck, in4_sdata,   // input 4: phono / line ADC
     input  wire i2c_scl,
     inout  wire i2c_sda,
     output wire i2s_bclk_out,
@@ -63,7 +65,7 @@ module top #(
     //   hold_cnt == 1024 -> sel_cur <= ctl_sel (mux flips under reset)
     //   hold_cnt == 0    -> reset released (bclk_rx via its synchroniser)
     // so a glitch on the switched bit clock can never reach live logic.
-    reg  [1:0]  sel_cur;
+    reg  [2:0]  sel_cur;
     reg         sel_pend;
     reg  [10:0] hold_cnt;
     reg         hold;                      // registered: clean async reset
@@ -76,12 +78,12 @@ module top #(
     wire m_bclk, m_lrck, m_sdata, m_dsd, m_dauto, m_drs;
     reg  [7:0] ctl_dmode;     // I2C 0x0D
     reg  [3:0] ctl_dinv, ctl_dswap;   // I2C 0x0E
-    wire [3:0] in_active;
+    wire [4:0] in_active;
     in_mux #(.USE_DCS(USE_DCS)) u_mux (
         .clk(clk), .rst_n(rst_n), .sel(sel_cur),
-        .bclk_in({in3_bclk, in2_bclk, in1_bclk, i2s_bclk_in}),
-        .lrck_in({in3_lrck, in2_lrck, in1_lrck, i2s_lrck_in}),
-        .sdata_in({in3_sdata, in2_sdata, in1_sdata, i2s_sdata_in}),
+        .bclk_in({in4_bclk, in3_bclk, in2_bclk, in1_bclk, i2s_bclk_in}),
+        .lrck_in({in4_lrck, in3_lrck, in2_lrck, in1_lrck, i2s_lrck_in}),
+        .sdata_in({in4_sdata, in3_sdata, in2_sdata, in1_sdata, i2s_sdata_in}),
         .dsd_on0(dsd_on), .dsd_on3(in3_dsd),
         .dsd_mode(ctl_dmode), .dsd_inv(ctl_dinv), .dsd_swap(ctl_dswap),
         .bclk(m_bclk), .lrck(m_lrck), .sdata(m_sdata), .dsd_on(m_dsd),
@@ -332,7 +334,7 @@ module top #(
 
     // ---------------- control FSM ----------------
     reg [10:0] gain;          // 0..1024
-    reg  [1:0] ctl_sel;       // I2C: requested input
+    reg  [2:0] ctl_sel;       // I2C: requested input (0..4)
     reg        ctl_mute;      // I2C: forced mute
     wire sw_req = (ctl_sel != sel_cur);
     wire fault = a_fault | ev_bad | mode_bad | stage_ovf | sw_req | ctl_mute |
@@ -345,7 +347,7 @@ module top #(
             cst <= C_IDLE; path <= P_X1; cfg_k <= 3'd0; cfg_fam48 <= 1'b0;
             cfg_dsd <= 1'b0; cfg_dop <= 1'b0; seq_seen <= 1'b0; fresh <= 2'd0;
             tmo <= 25'd0; gain <= 11'd0;
-            sel_cur <= 2'd0; sel_pend <= 1'b0; hold_cnt <= 11'd0;
+            sel_cur <= 3'd0; sel_pend <= 1'b0; hold_cnt <= 11'd0;
         end else begin
             if (hold_cnt != 11'd0)
                 hold_cnt <= hold_cnt - 11'd1;
@@ -470,9 +472,10 @@ module top #(
     assign audio_on = (cst == C_RUN);
 
     // ---------------- I2C control / status ----------------
-    // 0x00 CTRL    rw  [1:0] input select, [7] mute
+    // 0x00 CTRL    rw  [2:0] input select 0..4 (5..7 -> 4), [7] mute
     // 0x01 STATUS  r   [0] audio on, [1] locking/locked, [3:2] current
-    //                  input, [7:4] inputs with a live LRCK
+    //                  input [1:0], [7:4] inputs 0..3 with a live LRCK
+    //                  (kept for old firmware; input 4 -> see 0x0F)
     // 0x02 FORMAT  r   [2:0] k, [3] 48k family, [4] native DSD, [5] DoP,
     //                  [7] valid
     // 0x03 RATE    r   0 none; PCM 1..10 = 44.1,48,88.2,96,176.4,192,
@@ -480,7 +483,7 @@ module top #(
     //                  0x21..0x23 DoP64..256 (+0x08: 48k-family DSD)
     // 0x04 PLL     r   DPLL gear (0..4)
     // 0x05 ID      r   0xA5
-    // 0x06 VERSION r   0x03
+    // 0x06 VERSION r   0x06
     // 0x07 ATT     rw  [3:0] PCM headroom 0..12 x 0.5 dB (0..6 dB)
     // 0x08 CLIP    r   [0] saturation within the last ~85 ms, [7] sticky
     //              w   any value clears the sticky bit
@@ -498,6 +501,7 @@ module top #(
     //                  DSD detection; reset 0xC1 (Fox: pin, HDMI: pin + auto)
     // 0x0E DSD_CFG rw  [3:0] per input: DSD RIGHT on SDATA (1) / on LRCK (0),
     //                  [7:4] flag pin active low; reset 0x0E | DSD_SDATA_IS_RIGHT
+    // 0x0F INPUTS  r   [4:0] inputs 0..4 with a live LRCK, [7:5] current input
     wire       sda_oe;
     wire [7:0] i2c_ptr, i2c_waddr, i2c_wdata;
     wire       i2c_wr;
@@ -511,7 +515,7 @@ module top #(
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            ctl_sel <= 2'd0; ctl_mute <= 1'b0; ctl_att <= ATT_DEFAULT;
+            ctl_sel <= 3'd0; ctl_mute <= 1'b0; ctl_att <= ATT_DEFAULT;
             ctl_dmode <= 8'hC1; ctl_dinv <= 4'd0;
             ctl_dswap <= {3'b111, (DSD_SDATA_IS_RIGHT != 0)};
         end else if (i2c_wr && i2c_waddr == 8'h0D) begin
@@ -520,7 +524,7 @@ module top #(
             ctl_dswap <= i2c_wdata[3:0];
             ctl_dinv <= i2c_wdata[7:4];
         end else if (i2c_wr && i2c_waddr == 8'h00) begin
-            ctl_sel <= i2c_wdata[1:0];
+            ctl_sel <= (i2c_wdata[2:0] > 3'd4) ? 3'd4 : i2c_wdata[2:0];
             ctl_mute <= i2c_wdata[7];
         end else if (i2c_wr && i2c_waddr == 8'h07) begin
             ctl_att <= (i2c_wdata[3:0] > 4'd12) ? 4'd12 : i2c_wdata[3:0];
@@ -580,13 +584,13 @@ module top #(
         else
             rate_code = 8'd1 + {4'd0, cfg_k, 1'b0} + {7'd0, cfg_fam48};
         case (i2c_ptr)
-            8'h00: i2c_rd = {ctl_mute, 5'd0, ctl_sel};
-            8'h01: i2c_rd = {in_active, sel_cur, running, cst == C_RUN};
+            8'h00: i2c_rd = {ctl_mute, 4'd0, ctl_sel};
+            8'h01: i2c_rd = {in_active[3:0], sel_cur[1:0], running, cst == C_RUN};
             8'h02: i2c_rd = {running, 1'b0, cfg_dop, cfg_dsd, cfg_fam48, cfg_k};
             8'h03: i2c_rd = rate_code;
             8'h04: i2c_rd = {5'd0, a_gear};
             8'h05: i2c_rd = 8'hA5;
-            8'h06: i2c_rd = 8'h05;
+            8'h06: i2c_rd = 8'h06;
             8'h07: i2c_rd = {4'd0, ctl_att};
             8'h08: i2c_rd = {clip_sticky, 6'd0, clip_tmr != 22'd0};
             8'h09: i2c_rd = {eq_nsec, 2'd0, eq_bank, eq_pend};
@@ -594,6 +598,7 @@ module top #(
             8'h0B: i2c_rd = {1'b0, eq_idx};
             8'h0D: i2c_rd = ctl_dmode;
             8'h0E: i2c_rd = {ctl_dinv, ctl_dswap};
+            8'h0F: i2c_rd = {sel_cur, in_active};
             default: i2c_rd = 8'h00;
         endcase
     end

@@ -27,6 +27,7 @@ module tb_hdmi;
         .in1_bclk(1'b0), .in1_lrck(1'b0), .in1_sdata(1'b0),
         .in2_bclk(b2), .in2_lrck(l2), .in2_sdata(d2),
         .in3_bclk(b3), .in3_lrck(l3), .in3_sdata(d3), .in3_dsd(hflag),
+        .in4_bclk(1'b0), .in4_lrck(1'b0), .in4_sdata(1'b0),
         .i2c_scl(scl_m), .i2c_sda(i2c_sda),
         .i2s_bclk_out(obclk), .i2s_lrck_out(olrck), .i2s_sdata_out(osdata),
         .audio_on(audio_on));
@@ -159,7 +160,7 @@ module tb_hdmi;
     initial begin
         #(3e6);
         rd_regs(8'h05, r0, r1, r2, r3);
-        check(r0, 8'hA5, "ID"); check(r1, 8'h05, "VERSION");
+        check(r0, 8'hA5, "ID"); check(r1, 8'h06, "VERSION");
         rd_regs(8'h0D, r0, r1, r2, r3);
         check(r0, 8'hC1, "DSD_MODE"); check(r1, 8'h0F, "DSD_CFG");
         // in2: PCM with auto-detect on
