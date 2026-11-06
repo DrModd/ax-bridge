@@ -18,8 +18,16 @@
 //   4L <  4M - S      -> 1T   (L < M - 1.5T)
 //   12L < 12M - S     -> 2T   (L < M - 0.5T)
 //   12L < 12M + S     -> 3T   (L < M + 0.5T), longer -> error
-// No rate table; at 192 kHz this takes +-15 ns of duty distortion plus
-// jitter with 98 MS/s sampling.
+// That coarse grid (the maxima carry +-1 sample of quantisation) only
+// bootstraps the decoder. Once subframes decode, a fine grid takes over:
+//   T  = (length of 8 good subframes = 512T) / 512, in 1/16 sample
+//   Dh, Dl = mean residual (16L - n*T) of 64 decoded pulses of each level
+//   x = 16L - D(level):  < 1.5T -> 1T,  < 2.5T -> 2T,  < 3.5T -> 3T
+// The residuals also absorb the sampling bias (at 192 kHz T is ~4 whole
+// samples, so every edge of one level is rounded the same way), so the
+// thresholds sit in the middle between the measured pulse classes.
+// No rate table; at 192 kHz this takes about +-15 ns of duty distortion
+// plus jitter with 98 MS/s sampling.
 //
 // Subframe: preamble B/M (left; B = block start) or W (right) as pulse
 // patterns 3-1-1-3 / 3-3-1-1 / 3-2-1-2, then 28 biphase cells (2T = 0,
@@ -104,11 +112,76 @@ module spdif_rx (
     wire [12:0] L   = {5'd0, plen};
     wire [12:0] L4  = L << 2,  M4 = M << 2;
     wire [12:0] L12 = (L << 3) + (L << 2), M12 = (M << 3) + (M << 2);
-    wire c1 = (L4 + S) < M4;
-    wire c2 = !c1 && ((L12 + S) < M12);
-    wire c3 = !c1 && !c2 && (L12 < M12 + S);
+    wire k1 = (L4 + S) < M4;                          // coarse grid (bootstrap)
+    wire k2 = !k1 && ((L12 + S) < M12);
+    wire k3 = !k1 && !k2 && (L12 < M12 + S);
+
+    // fine grid
+    reg  [11:0] t16;                  // T in 1/16 sample (192 kHz: ~64, 44.1 kHz: ~279)
+    reg  signed [12:0] dh16, dl16;    // per-level offset, 1/16 sample
+    reg         fine;                 // fine grid valid
+    wire signed [14:0] x16 = $signed({3'd0, plen, 4'd0}) - (plev ? dh16 : dl16);
+    wire signed [14:0] h15 = $signed({3'd0, t16}) + $signed({4'd0, t16[11:1]});   // 1.5T
+    wire signed [14:0] h25 = h15 + $signed({3'd0, t16});
+    wire signed [14:0] h35 = h25 + $signed({3'd0, t16});
+    wire f1 = x16 < h15;
+    wire f2 = !f1 && (x16 < h25);
+    wire f3 = !f1 && !f2 && (x16 < h35);
+    wire c1 = fine ? f1 : k1;
+    wire c2 = fine ? f2 : k2;
+    wire c3 = fine ? f3 : k3;
     // class: 1, 2, 3; 0 = invalid
     wire [1:0] cls = c1 ? 2'd1 : c2 ? 2'd2 : c3 ? 2'd3 : 2'd0;
+
+    // ---- fine-grid estimation (only from pulses of correctly decoded subframes) ----
+    reg  [11:0] sub;                  // samples since the end of the last preamble 3T
+    reg  [14:0] tsum;                 // 8 subframes
+    reg  [2:0]  tn;
+    reg  signed [18:0] rh, rl;        // residual sums
+    reg  [5:0]  rnh, rnl;
+    reg         t_ok, dh_ok, dl_ok;
+    wire [13:0] nt16 = (cls == 2'd1) ? {2'd0, t16} : (cls == 2'd2) ? {1'd0, t16, 1'b0} :
+                       ({2'd0, t16} + {1'd0, t16, 1'b0});
+    wire signed [14:0] res16 = $signed({3'd0, plen, 4'd0}) - $signed({1'b0, nt16});
+    wire        sub_end;              // a preamble 3T ends a subframe (64T since the last one)
+    wire        res_take;             // pulse taken for the level offsets
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            sub <= 12'd0; tsum <= 15'd0; tn <= 3'd0; t16 <= 12'd0;
+            rh <= 19'sd0; rl <= 19'sd0; rnh <= 6'd0; rnl <= 6'd0; dh16 <= 13'sd0; dl16 <= 13'sd0;
+            t_ok <= 1'b0; dh_ok <= 1'b0; dl_ok <= 1'b0; fine <= 1'b0;
+        end else begin
+            if (!ref_ok) begin                              // signal lost: back to bootstrap
+                t_ok <= 1'b0; dh_ok <= 1'b0; dl_ok <= 1'b0; fine <= 1'b0;
+                tn <= 3'd0; tsum <= 15'd0; rnh <= 6'd0; rnl <= 6'd0; rh <= 19'sd0; rl <= 19'sd0;
+            end else if (pv) begin
+                if (sub_end) begin
+                    sub <= 12'd0;
+                    if (clean && sub + {4'd0, plen} < 12'd3000) begin  // clean subframe; 64T, 32 kHz: ~1570
+                        tsum <= (tn == 3'd0 ? 15'd0 : tsum) + {3'd0, sub} + {7'd0, plen};
+                        tn <= tn + 3'd1;
+                        if (tn == 3'd7) begin
+                            t16 <= (tsum + {3'd0, sub} + {7'd0, plen}) >> 5;   // 512T -> T/16
+                            t_ok <= 1'b1;
+                        end
+                    end
+                end else if (sub < 12'd4000)
+                    sub <= sub + {4'd0, plen};
+                if (res_take && t_ok && cls != 2'd0) begin
+                    if (plev) begin
+                        rh <= (rnh == 6'd0 ? 19'sd0 : rh) + res16;
+                        rnh <= rnh + 6'd1;
+                        if (rnh == 6'd63) begin dh16 <= (rh + res16) >>> 6; dh_ok <= 1'b1; end
+                    end else begin
+                        rl <= (rnl == 6'd0 ? 19'sd0 : rl) + res16;
+                        rnl <= rnl + 6'd1;
+                        if (rnl == 6'd63) begin dl16 <= (rl + res16) >>> 6; dl_ok <= 1'b1; end
+                    end
+                end
+                fine <= t_ok && dh_ok && dl_ok;
+            end
+        end
+    end
 
     // ---------------- biphase / preamble decoder ----------------
     localparam S_HUNT = 2'd0, S_PRE = 2'd1, S_DATA = 2'd2;
@@ -120,18 +193,21 @@ module spdif_rx (
     reg [27:0] sr;
     reg [1:0]  ptype;                 // 1 = B, 2 = M, 3 = W
     reg        sf_v;                  // subframe complete strobe
+    reg        clean;                 // last subframe decoded without error
     reg        sf_bad;
     reg [1:0]  sf_type;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             st <= S_HUNT; pn <= 2'd0; pat <= 6'd0; half <= 1'b0; nb_ <= 5'd0;
-            sr <= 28'd0; ptype <= 2'd0; sf_v <= 1'b0; sf_bad <= 1'b0; sf_type <= 2'd0;
+            sr <= 28'd0; ptype <= 2'd0; sf_v <= 1'b0; sf_bad <= 1'b0; sf_type <= 2'd0; clean <= 1'b0;
         end else begin
             sf_v <= 1'b0;
             if (pv && ref_ok) begin
                 case (st)
-                S_HUNT:
+                S_HUNT: begin
                     if (cls == 2'd3) begin st <= S_PRE; pn <= 2'd0; end
+                    else clean <= 1'b0;
+                end
                 S_PRE: begin
                     pat <= {pat[3:0], cls};
                     pn <= pn + 2'd1;
@@ -141,7 +217,7 @@ module spdif_rx (
                         6'b01_01_11: begin ptype <= 2'd1; st <= S_DATA; end
                         6'b11_01_01: begin ptype <= 2'd2; st <= S_DATA; end
                         6'b10_01_10: begin ptype <= 2'd3; st <= S_DATA; end
-                        default:     st <= S_HUNT;
+                        default:     begin st <= S_HUNT; clean <= 1'b0; end
                         endcase
                         half <= 1'b0; nb_ <= 5'd0;
                     end
@@ -154,20 +230,24 @@ module spdif_rx (
                         half <= ~half;
                     end else begin
                         // 3T or invalid inside the data: lost sync
-                        sf_v <= 1'b1; sf_bad <= 1'b1; sf_type <= ptype;
+                        sf_v <= 1'b1; sf_bad <= 1'b1; sf_type <= ptype; clean <= 1'b0;
                         st <= (cls == 2'd3) ? S_PRE : S_HUNT; pn <= 2'd0;
                     end
                     if (nb_ == 5'd27 && ((cls == 2'd2 && !half) || (cls == 2'd1 && half))) begin
-                        sf_v <= 1'b1; sf_bad <= 1'b0; sf_type <= ptype;
+                        sf_v <= 1'b1; sf_bad <= 1'b0; sf_type <= ptype; clean <= ~^sr[27:1] ^ (cls == 2'd1);
                         st <= S_HUNT;
                     end
                 end
                 endcase
             end else if (pv && st != S_HUNT) begin
                 st <= S_HUNT;                     // no reference yet
+                clean <= 1'b0;
             end
         end
     end
+
+    assign sub_end  = pv && ref_ok && st == S_HUNT && cls == 2'd3;
+    assign res_take = locked && (st != S_HUNT || cls == 2'd3);
 
     // ---------------- frames, channel status, lock ----------------
     // sr after the last bit: sr[0] = bit 4 ... sr[27] = bit 31 (one clock
