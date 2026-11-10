@@ -4,12 +4,12 @@ SHELL := /bin/bash
 RTL := rtl/mem.v rtl/afifo.v rtl/in_mux.v rtl/bclk_rx.v rtl/spdif_rx.v rtl/rate_mon.v rtl/dop_det.v \
        rtl/cic5_dsd.v rtl/fir_stage.v rtl/asrc.v rtl/i2s_tx32.v rtl/i2c_slave.v rtl/eq_biquad.v rtl/top.v
 
-.PHONY: all verify coef units eq eqsys hdmi spdif corner sys switch mux clip recover lint synth jf jf_audio clean
+.PHONY: all verify coef units eq eqsys hdmi spdif spdif_stress corner sys switch mux clip recover lint synth jf jf_audio clean
 
 all: verify
 
 # Everything that must be green before flashing.
-verify: coef lint units eq corner synth sys switch mux clip recover eqsys hdmi spdif
+verify: coef lint units eq corner synth sys switch mux clip recover eqsys hdmi spdif spdif_stress
 
 coef:
 	python3 tools/gen_coefs.py --check
@@ -53,6 +53,13 @@ hdmi:
 # 48k, non-audio ARC that must stay silent), line switching, status.
 spdif:
 	python3 tb/run_sys.py --spdif
+
+# S/PDIF receiver alone: line switches, on-the-fly rate changes, IEC 61937 bursts
+spdif_stress:
+	mkdir -p build
+	iverilog -g2005 -DNSW=60 -s tb_spdif_stress -o build/spdif_stress.vvp tb/tb_spdif_stress.v rtl/spdif_rx.v
+	vvp -n build/spdif_stress.vvp | grep -v 'switch to\|rate change' | tee build/spdif_stress.log
+	grep -q '^PASS' build/spdif_stress.log
 
 # System benches: 10 PCM rates, DSD64..512, DoP64..256 with clock offsets,
 # output decoded from the I2S pins, THD+N / level / frequency checked.

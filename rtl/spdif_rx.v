@@ -34,11 +34,22 @@
 // 1T 1T = 1): aux[3:0], audio[19:0] (LSB first: 24-bit sample = bits
 // 4..27), V, U, C, P (even parity over bits 4..31).
 //
-// Output: one stereo frame per W subframe that follows a B/M subframe,
-// 24-bit samples left-justified in 32 bits, only while locked (16 good
-// frames in a row) and the stream is audio (channel status byte 0 bit 1
-// = 0). A frame with a parity error repeats the previous one, so the
-// sample rate seen by the ASRC never changes.
+// Output: one stereo frame per W subframe, 24-bit samples left-justified
+// in 32 bits, only while locked (16 good frames in a row) and the stream is
+// known to be audio:
+//   - nothing leaves before one whole channel-status block (192 frames) has
+//     been read: until then nobody knows whether it is PCM;
+//   - channel status byte 0 bit 1 = 1 (AC3, DTS, ...) -> silent;
+//   - IEC 61937 burst preamble Pa/Pb (0xF872 / 0x4E1F in the top 16 bits
+//     of a frame) -> silent at once and for ~170 ms after the last one:
+//     a player switching from PCM to Dolby flips the channel-status bit
+//     only at the next block, and some sources never set it.
+// A frame with a parity or biphase error (or a missing left subframe)
+// repeats the previous one, so the frame rate seen downstream never
+// changes.
+// The fine grid is dropped (back to bootstrap) when no subframe has
+// decoded cleanly for ~330 us: a source that changes its sample rate
+// without a gap (x2, x4) would otherwise keep a stale grid for ever.
 module spdif_rx (
     input  wire        clk,
     input  wire        rst_n,       // held low while the input is switched
@@ -48,7 +59,7 @@ module spdif_rx (
     output reg  [31:0] l,
     output reg  [31:0] r,
     output reg         locked,
-    output reg         nonaudio,    // channel status: not PCM (AC3, DTS, ...)
+    output wire        nonaudio,    // not PCM: channel status (AC3, DTS, ...) or IEC 61937 bursts
     output reg         err,         // one-clock strobe: parity / biphase error
     output reg  [7:0]  cs0,         // channel status byte 0
     output reg  [7:0]  cs3          // channel status byte 3 (sample rate code)
@@ -145,13 +156,15 @@ module spdif_rx (
     wire signed [14:0] res16 = $signed({3'd0, plen, 4'd0}) - $signed({1'b0, nt16});
     wire        sub_end;              // a preamble 3T ends a subframe (64T since the last one)
     wire        res_take;             // pulse taken for the level offsets
+    reg  [13:0] cl_wd;                // clocks since the last clean subframe
+    wire        stale = &cl_wd;       // ~330 us: grid no longer fits the stream
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             sub <= 12'd0; tsum <= 15'd0; tn <= 3'd0; t16 <= 12'd0;
             rh <= 19'sd0; rl <= 19'sd0; rnh <= 6'd0; rnl <= 6'd0; dh16 <= 13'sd0; dl16 <= 13'sd0;
             t_ok <= 1'b0; dh_ok <= 1'b0; dl_ok <= 1'b0; fine <= 1'b0;
         end else begin
-            if (!ref_ok) begin                              // signal lost: back to bootstrap
+            if (!ref_ok || stale) begin                     // signal lost / grid stale: back to bootstrap
                 t_ok <= 1'b0; dh_ok <= 1'b0; dl_ok <= 1'b0; fine <= 1'b0;
                 tn <= 3'd0; tsum <= 15'd0; rnh <= 6'd0; rnl <= 6'd0; rh <= 19'sd0; rl <= 19'sd0;
             end else if (pv) begin
@@ -196,6 +209,11 @@ module spdif_rx (
     reg        clean;                 // last subframe decoded without error
     reg        sf_bad;
     reg [1:0]  sf_type;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) cl_wd <= 14'd0;
+        else if (sf_v && !sf_bad && clean) cl_wd <= 14'd0;   // clean: one clock after sf_v
+        else if (!stale) cl_wd <= cl_wd + 14'd1;
+    end
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             st <= S_HUNT; pn <= 2'd0; pat <= 6'd0; half <= 1'b0; nb_ <= 5'd0;
@@ -260,57 +278,69 @@ module spdif_rx (
     wire [23:0] smp = sr[23:0];
 
     reg [31:0] hl;                     // left sample waiting for its right
-    reg        have_l;
+    reg        have_l, l_bad;
     reg [31:0] cs;
     reg [7:0]  csi;                    // channel-status bit index (left subframes)
     reg        cs_run;
+    reg        cs_ok;                  // one whole channel-status block read
     reg [4:0]  good;
     reg [15:0] wd;                     // watchdog: clocks since the last good frame
+    reg [22:0] bst;                    // IEC 61937 burst hold (~170 ms)
+    reg        na_cs;                  // channel status byte 0 bit 1
+    assign     nonaudio = na_cs || (bst != 23'd0);
+    // IEC 61937 burst preamble: Pa = 0xF872 (left), Pb = 0x4E1F (right), 16-bit words at the top
+    wire       pab = (hl[31:16] == 16'hF872) && (smp[23:8] == 16'h4E1F);
+    wire       frame_ok = !sf_bad_d && par_ok && have_l && !l_bad;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            valid <= 1'b0; l <= 32'd0; r <= 32'd0; locked <= 1'b0; nonaudio <= 1'b0;
+            valid <= 1'b0; l <= 32'd0; r <= 32'd0; locked <= 1'b0; na_cs <= 1'b0;
             err <= 1'b0; cs0 <= 8'd0; cs3 <= 8'd0;
-            hl <= 32'd0; have_l <= 1'b0; cs <= 32'd0; csi <= 8'd0; cs_run <= 1'b0;
-            good <= 5'd0; wd <= 16'd0;
+            hl <= 32'd0; have_l <= 1'b0; l_bad <= 1'b0; cs <= 32'd0; csi <= 8'd0; cs_run <= 1'b0;
+            cs_ok <= 1'b0; good <= 5'd0; wd <= 16'd0; bst <= 23'd0;
         end else begin
             valid <= 1'b0;
             err <= 1'b0;
             if (wd != 16'hFFFF) wd <= wd + 16'd1;
-            if (wd == 16'hFFFF) begin locked <= 1'b0; good <= 5'd0; end   // ~1.3 ms without frames
+            // ~1.3 ms without frames, or the grid went stale (rate changed): unlock,
+            // and read the channel status again before the next sample
+            if (wd == 16'hFFFF || stale) begin locked <= 1'b0; good <= 5'd0; cs_ok <= 1'b0; end
+            if (bst != 23'd0) bst <= bst - 23'd1;
             if (sf_d) begin
                 if (sf_bad_d || !par_ok) begin
                     err <= 1'b1;
-                    if (good > 5'd4) good <= good - 5'd4; else begin good <= 5'd0; locked <= 1'b0; end
+                    if (good > 5'd4) good <= good - 5'd4; else begin good <= 5'd0; locked <= 1'b0; cs_ok <= 1'b0; end
                 end
                 if (sf_type_d != 2'd3) begin                   // left (B or M)
+                    have_l <= 1'b1;
+                    l_bad  <= sf_bad_d || !par_ok;
                     if (!sf_bad_d) begin
                         if (par_ok) hl <= {smp, 8'd0};
-                        have_l <= 1'b1;
                         // channel status: bit n of the block from the n-th left subframe
                         if (sf_type_d == 2'd1) begin csi <= 8'd1; cs_run <= 1'b1; cs <= {31'd0, sr[26]}; end
                         else if (cs_run) begin
                             if (csi < 8'd32) cs[csi[4:0]] <= sr[26];
                             if (csi == 8'd31) begin
                                 cs0 <= cs[7:0]; cs3 <= {sr[26], cs[30:24]};
-                                nonaudio <= cs[1];
+                                na_cs <= cs[1];
+                                cs_ok <= 1'b1;
                             end
                             csi <= csi + 8'd1;
                         end
                     end else
-                        have_l <= 1'b0;
-                end else if (!sf_bad_d && have_l) begin        // right after left: a frame
+                        cs_run <= 1'b0;                        // a lost bit: wait for the next block start
+                end else begin                                 // right (W): one frame
                     have_l <= 1'b0;
-                    wd <= 16'd0;
-                    if (par_ok) begin
+                    if (!sf_bad_d) wd <= 16'd0;
+                    if (frame_ok) begin
                         if (good != 5'd31) good <= good + 5'd1;
                         if (good >= 5'd16) locked <= 1'b1;
                         l <= hl;
                         r <= {smp, 8'd0};
+                        if (pab) bst <= {23{1'b1}};
                     end
-                    // parity error: l / r keep the previous frame
-                    valid <= locked && !nonaudio;
-                end else
-                    have_l <= 1'b0;
+                    // any error: l / r keep the previous frame (same frame count)
+                    valid <= locked && cs_ok && !na_cs && bst == 23'd0 && !(frame_ok && pab);
+                end
             end
         end
     end
