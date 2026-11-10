@@ -47,6 +47,12 @@ module tb_spdif_dyn #(parameter integer SEED = 1, parameter real T0 = 100.0) (ou
     end
 endmodule
 
+`ifndef NRATES
+`define NRATES 10
+`endif
+`ifndef SEG_MS
+`define SEG_MS 40
+`endif
 module tb_ratechg;
 `ifdef V2
     reg sclk = 0;  always #10.0 sclk = ~sclk;
@@ -115,6 +121,7 @@ module tb_ratechg;
         rates[0] = 44100.0;  rates[1] = 48000.0;  rates[2] = 96000.0;  rates[3] = 88200.0;
         rates[4] = 192000.0; rates[5] = 176400.0; rates[6] = 44100.0;  rates[7] = 88200.0;
         rates[8] = 48000.0;  rates[9] = 44100.0;
+        // NRATES (default 10) limits the run
         s.fs = rates[0];
         #(3e6);
 `ifdef V2
@@ -122,7 +129,7 @@ module tb_ratechg;
 `endif
         wr_reg(8'h00, 8'h01);          // input 1, line 0
         $fdisplay(fe, "%0.3f %0.0f", $realtime / 1000.0, rates[0]);
-        for (i = 1; i < 10; i = i + 1) begin
+        for (i = 1; i < `NRATES; i = i + 1) begin
             #(`SEG_MS * 1e6);
             s.fs = rates[i];
             $fdisplay(fe, "%0.3f %0.0f", $realtime / 1000.0, rates[i]);

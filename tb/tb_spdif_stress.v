@@ -14,7 +14,7 @@ module tb_spdif_cnt #(
     output reg line = 1'b0
 );
     real    fs = 44100.0, jit = 0.0, duty = 0.0, half, j;
-    integer seed, frame, gap = 0, bmode = 0, na = 0, bf = 0;
+    integer seed, frame, gap = 0, bmode = 0, na = 0, bf = 0, junk = 0, jk;
     reg [23:0] wl, wr;
     reg [23:0] n;
     reg [191:0] cs;
@@ -47,6 +47,13 @@ module tb_spdif_cnt #(
         #(T0);
         forever begin
             if (gap > 0) begin line = 1'b0; #(gap); gap = 0; end
+            // transmitter relocking: random pulses 1..3 half-cells for `junk` ns
+            while (junk > 0) begin
+                jk = 1 + (($random(seed) & 32'h7fffffff) % 3);
+                half = 1.0e9 / (fs * 128.0) * (0.8 + 0.4 * (($random(seed) & 1023) / 1023.0));
+                pulse(jk);
+                junk = junk - $rtoi(jk * half);
+            end
             half = 1.0e9 / (fs * 128.0);
             cs[1] = (na != 0);
             if (bmode) begin                      // IEC 61937: Pa/Pb every 1536 frames, data otherwise
@@ -153,6 +160,22 @@ module tb_spdif_stress;
             end
         end
         #(1.5e6);
+        // ---- transmitter relock garbage: random biphase-like pulses, then a new rate ----
+        for (i = 0; i < 12; i = i + 1) begin
+            k = frames;
+            li = $random(sd) % 7; if (li < 0) li = -li;
+            case (sel)
+                0: begin s0.junk = 2000000; s0.fs = rates[li]; end
+                1: begin s1.junk = 2000000; s1.fs = rates[li]; end
+                2: begin s2.junk = 2000000; s2.fs = rates[li]; end
+                default: begin s3.junk = 2000000; s3.fs = rates[li]; end
+            endcase
+            #(2.0e6);
+            $display("%10.3f us  garbage 2 ms on line %0d (then %0.0f Hz): %0d frames out during it", $realtime / 1000.0,
+                     sel, rates[li], frames - k);
+            first = 1;
+            #(8.0e6);
+        end
         // ---- compressed audio ----
         // 1) the selected source turns into a Dolby/DTS burst stream without
         //    touching the channel status: must go silent from the first Pa/Pb

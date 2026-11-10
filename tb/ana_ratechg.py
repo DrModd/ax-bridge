@@ -26,14 +26,17 @@ for a, b in runs:
     fs_out = 1e6 / np.median(np.diff(seg_t)) if n > 10 else 0
     worst = -200.0
     wt = 0.0
+    # skip the fade-in (gain steps of 1/1024 per frame, ~5.3 ms): the
+    # step pattern itself reaches about -52 dBFS in the 4th difference
+    sk = int(6e-3 * fs_out) if fs_out else 0
     for x in (l[a:b], r[a:b]):
-        if n < 16:
+        if n < sk + 16:
             continue
-        h = np.abs(np.diff(x, 4))
+        h = np.abs(np.diff(x[sk:], 4))
         k = int(np.argmax(h))
         v = 20 * np.log10(h[k] + 1e-12)
         if v > worst:
-            worst, wt = v, seg_t[k]
+            worst, wt = v, seg_t[sk + k]
     pitch = 0.0
     if n > 4096:
         y = l[b - 4096:b] * np.hanning(4096)

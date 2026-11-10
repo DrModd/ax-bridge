@@ -47,9 +47,14 @@
 // A frame with a parity or biphase error (or a missing left subframe)
 // repeats the previous one, so the frame rate seen downstream never
 // changes.
-// The fine grid is dropped (back to bootstrap) when no subframe has
-// decoded cleanly for ~330 us: a source that changes its sample rate
-// without a gap (x2, x4) would otherwise keep a stale grid for ever.
+// The fine grid is dropped (back to bootstrap, unlocked, channel status
+// read again) when
+//   - a subframe decodes cleanly but is more than 3 % longer or shorter
+//     than 64T: the source changed its rate a little (44.1 <-> 48 ...),
+//     caught on the first subframe, before a half-fitting grid can let
+//     subframes with an even number of wrong bits through the parity check;
+//   - no subframe has decoded cleanly for ~330 us: the rate changed a lot
+//     (x2, x4) and nothing fits any more.
 module spdif_rx (
     input  wire        clk,
     input  wire        rst_n,       // held low while the input is switched
@@ -158,6 +163,11 @@ module spdif_rx (
     wire        res_take;             // pulse taken for the level offsets
     reg  [13:0] cl_wd;                // clocks since the last clean subframe
     wire        stale = &cl_wd;       // ~330 us: grid no longer fits the stream
+    // subframe length check (64T = 4 * t16 samples), clean subframes only
+    wire [13:0] sf_len = {2'd0, sub} + {6'd0, plen};
+    wire [13:0] sf_exp = {t16, 2'b00};
+    wire [13:0] sf_dev = (sf_len > sf_exp) ? sf_len - sf_exp : sf_exp - sf_len;
+    wire        jump   = sub_end && fine && clean && (sf_dev > {5'd0, t16[11:3]});   // > 64T / 32
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             sub <= 12'd0; tsum <= 15'd0; tn <= 3'd0; t16 <= 12'd0;
@@ -211,6 +221,7 @@ module spdif_rx (
     reg [1:0]  sf_type;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) cl_wd <= 14'd0;
+        else if (jump) cl_wd <= 14'h3FFF;                   // rate changed: stale at once
         else if (sf_v && !sf_bad && clean) cl_wd <= 14'd0;   // clean: one clock after sf_v
         else if (!stale) cl_wd <= cl_wd + 14'd1;
     end

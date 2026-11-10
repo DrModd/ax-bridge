@@ -60,6 +60,9 @@ spdif_stress:
 	iverilog -g2005 -DNSW=60 -s tb_spdif_stress -o build/spdif_stress.vvp tb/tb_spdif_stress.v rtl/spdif_rx.v
 	vvp -n build/spdif_stress.vvp | grep -v 'switch to\|rate change' | tee build/spdif_stress.log
 	grep -q '^PASS' build/spdif_stress.log
+	iverilog -g2005 -DNSW=1 -DDUTY=10.0 -s tb_spdif_near -o build/spdif_near.vvp tb/tb_spdif_near.v tb/tb_spdif_stress.v rtl/spdif_rx.v
+	vvp -n build/spdif_near.vvp | tee build/spdif_near.log
+	grep -q '^PASS' build/spdif_near.log
 
 # System benches: 10 PCM rates, DSD64..512, DoP64..256 with clock offsets,
 # output decoded from the I2S pins, THD+N / level / frequency checked.
