@@ -1,10 +1,14 @@
 // ax_bridge_d2.cst - FPGA pins of the DigiD D2 main board (schematic NAXF, 13.11.2026).
 // ONE file for both projects: ax-bridge and ax-bridge2 carry this file
 // byte-for-byte identical, so both bitstreams run on the same board.
-// Change it only together with the board and copy it to both repositories.
+// Source of truth: INTERFACES.md in DrModd/DigiD-D2, branch claude/d2-4phase,
+// section 1 "Выводы FPGA на плате D2". Any pin change goes there and into the
+// schematic first, then into both repositories.
 //
 // Tang Primer 25K (GW5A-LV25MG121NC1/I0); every bank used here is 3.3 V.
-// Bank 2 (L2, L1, K1) is powered from outside: VCCIO2/3 on J2-2 / J2-4 = 3.3 V.
+// Bank 2 (L4) and bank 5 (C2, B2, A1): VCCIO from the module's own 3.3 V.
+// Free on J2: L2, L1, K1 (plain pins), F2 / F1 (clock pair). Do not use
+// E1 (pair of E2, the module oscillator) or D1 (CLKHOLD_N).
 // Module connector pins J1-n / J2-n per the Sipeed Tang Primer 25K specification.
 // All pins below are also on the Dock headers (Dock schematic Tang_25K_60033).
 //
@@ -19,21 +23,22 @@
 IO_LOC "sys_clk" E2;
 IO_PORT "sys_clk" IO_TYPE=LVCMOS33 PULL_MODE=NONE BANK_VCCIO=3.3;
 
-// audio MCLK: the only oscillator, 49.152 MHz, shared with the AX5689; J2-7, GCLKT_9B (bank 5)
-IO_LOC "mclk_in" F2;
+// audio MCLK: the only oscillator, 49.152 MHz through a buffer, shared with
+// the AX5689; J2-22, GCLKT_4 (bank 2)
+IO_LOC "mclk_in" L4;
 IO_PORT "mclk_in" IO_TYPE=LVCMOS33 PULL_MODE=NONE BANK_VCCIO=3.3;
 
-// ---- To the AX5689: I2S 192 kHz, 32-bit, master ----
-// BCLK, J2-6
-IO_LOC "i2s_bclk_out" L2;
+// ---- To the AX5689: I2S 192 kHz, 32-bit, master (odd J2 pins, bank 5, 33 R on the board) ----
+// BCLK -> BCLKI, J2-5
+IO_LOC "i2s_bclk_out" C2;
 IO_PORT "i2s_bclk_out" IO_TYPE=LVCMOS33 DRIVE=8 BANK_VCCIO=3.3;
 
-// LRCK, J2-8
-IO_LOC "i2s_lrck_out" L1;
+// LRCK -> FCLKI, J2-3
+IO_LOC "i2s_lrck_out" B2;
 IO_PORT "i2s_lrck_out" IO_TYPE=LVCMOS33 DRIVE=8 BANK_VCCIO=3.3;
 
-// DATA, J2-10
-IO_LOC "i2s_sdata_out" K1;
+// DATA -> SDI, J2-11
+IO_LOC "i2s_sdata_out" A1;
 IO_PORT "i2s_sdata_out" IO_TYPE=LVCMOS33 DRIVE=8 BANK_VCCIO=3.3;
 
 // high while audio is passed -> STM32 PD2, J1-58
@@ -54,7 +59,7 @@ IO_PORT "i2c_sda" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8 BANK_VCCIO=3.3;
 IO_LOC "i2s_bclk_in" H5;
 IO_PORT "i2s_bclk_in" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
 
-// Fox pin 25 I2S_LRCK: LRCK (PCM, DoP), J1-47
+// Fox pin 25 I2S_LRCK: LRCK (PCM, DoP; idle in native DSD), J1-47
 IO_LOC "i2s_lrck_in" D11;
 IO_PORT "i2s_lrck_in" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
 
