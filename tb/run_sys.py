@@ -113,7 +113,7 @@ CASES = {
     "dop256":  (2, 705600.0,   15.0,  997.0, 3001.0, -6.02),
 }
 
-def run_case(name, nout=8192, thdn_limit=-110.0, extra=()):
+def run_case(name, nout=8192, thdn_limit=-110.0, extra=(), swap=False, tag=None):
     mode, rate, ppm, fl, fr, lvl = CASES[name]
     params = [f"-Ptb_sys.MODE={mode}", f"-Ptb_sys.FS={rate}", f"-Ptb_sys.PPM={ppm}",
               f"-Ptb_sys.FL={fl}", f"-Ptb_sys.FR={fr}", f"-Ptb_sys.NOUT={nout}"] + list(extra)
@@ -151,7 +151,8 @@ def run_case(name, nout=8192, thdn_limit=-110.0, extra=()):
     y = data[-nout:] / 2.0 ** 31
     ok = True
     res = []
-    for ch, f0 in ((0, fl), (1, fr)):
+    # swap: DSD channels exchanged (DSD_SDATA_IS_RIGHT = 0)
+    for ch, f0 in (((0, fr), (1, fl)) if swap else ((0, fl), (1, fr))):
         fexp = f0 * (1 + ppm * 1e-6)
         fpk, amp, thdn = analyse(y[:, ch], fexp)
         cok = abs(fpk - fexp) < 0.5 and abs(amp - lvl) < 0.1 and thdn < thdn_limit
@@ -159,10 +160,26 @@ def run_case(name, nout=8192, thdn_limit=-110.0, extra=()):
         res.append(f"{'LR'[ch]}: f {fpk:9.3f} (exp {fexp:9.3f}) lvl {amp:6.2f} dBFS "
                    f"THD+N {thdn:7.1f} dB")
     on = [l for l in log.splitlines() if "audio_on" in l or "audio_off" in l]
-    print(f"{'PASS' if ok else 'FAIL'} {name:7s} | " + " | ".join(res) +
+    print(f"{'PASS' if ok else 'FAIL'} {(tag or name):7s} | " + " | ".join(res) +
           f" | {on[0] if on else 'never on'}; {len([l for l in on if 'off' in l])} drop(s), {dt:.0f}s")
     if any("audio_off" in l for l in on):
         ok = False
+    return ok
+
+def run_dsdl():
+    """Fox native DSD left channel: D2 layout (own line, LRCK pin = noise),
+    old three-wire layout (LRCK = left, own line = noise), swapped order,
+    PCM with noise on the DSD left line. L 997 / R 3001 Hz."""
+    ok = True
+    for tag, name, extra, swap in (
+            ("dsd64 D2 line", "dsd64", ["-Ptb_sys.LANE=1"], False),
+            ("dsd64 old LRCK", "dsd64", ["-Ptb_sys.LANE=0"], False),
+            ("dsd64 D2 swap", "dsd64", ["-Ptb_sys.LANE=1", "-Ptb_sys.RS=0"], True),
+            ("dsd256 D2 line", "dsd256", ["-Ptb_sys.LANE=1"], False),
+            ("pcm44 D2", "pcm44", ["-Ptb_sys.LANE=1"], False)):
+        lim = -110.0 if CASES[name][0] == 0 else -100.0
+        ok &= run_case(name, thdn_limit=lim, extra=extra, swap=swap, tag=tag)
+    print("PASS dsdl" if ok else "FAIL dsdl")
     return ok
 
 def run_switch():
@@ -390,6 +407,8 @@ if __name__ == "__main__":
         sys.exit(0 if run_spdif() else 1)
     if sys.argv[1:2] == ["--mux"]:
         sys.exit(0 if run_mux() else 1)
+    if sys.argv[1:2] == ["--dsdl"]:
+        sys.exit(0 if run_dsdl() else 1)
     if sys.argv[1:2] == ["--switch"]:
         sys.exit(0 if run_switch() else 1)
     if sys.argv[1:2] == ["--silicon"]:

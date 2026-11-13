@@ -1,3 +1,4 @@
+`define AXB_SIM_PORTS   // top: bench ports (in3_dsd)
 `timescale 1ns/1fs
 // S/PDIF receiver (input 1, tb/run_sys.py --spdif). Four lines at once on
 // unrelated clocks:
@@ -25,7 +26,7 @@ module tb_spdif;
     wire obclk, olrck, osdata, audio_on;
     top #(.WBITS(16), .GSH(4)) dut (
         .mclk_in(mclk),
-        .i2s_bclk_in(1'b0), .i2s_lrck_in(1'b0), .i2s_sdata_in(1'b0), .dsd_on(1'b0),
+        .i2s_bclk_in(1'b0), .i2s_lrck_in(1'b0), .i2s_dsdl_in(1'b0), .i2s_sdata_in(1'b0), .dsd_on(1'b0),
         .spdif_in(sp),
         .in2_bclk(1'b0), .in2_lrck(1'b0), .in2_sdata(1'b0),
         .in3_bclk(1'b0), .in3_lrck(1'b0), .in3_sdata(1'b0), .in3_dsd(1'b0),
@@ -162,7 +163,7 @@ module tb_spdif;
     initial begin
         #(3e6);
         rd_regs(8'h05, r0, r1, r2, r3);
-        check(r0, 8'hA5, "ID"); check(r1, 8'h07, "VERSION");
+        check(r0, 8'hA5, "ID"); check(r1, 8'h08, "VERSION");
         // line 0: coax 192k
         wr_reg(8'h00, 8'h01);
         wait_on(80.0);

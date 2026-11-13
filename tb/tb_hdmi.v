@@ -1,3 +1,4 @@
+`define AXB_SIM_PORTS   // top: bench ports (in3_dsd)
 `timescale 1ns/1fs
 // HDMI input (input 3) with native DSD (tb/run_sys.py --hdmi).
 //   in2: PCM 96 kHz with automatic DSD detection enabled: must stay PCM
@@ -23,7 +24,7 @@ module tb_hdmi;
     wire obclk, olrck, osdata, audio_on;
     top #(.WBITS(16), .GSH(4)) dut (
         .mclk_in(mclk),
-        .i2s_bclk_in(1'b0), .i2s_lrck_in(1'b0), .i2s_sdata_in(1'b0), .dsd_on(1'b0),
+        .i2s_bclk_in(1'b0), .i2s_lrck_in(1'b0), .i2s_dsdl_in(1'b0), .i2s_sdata_in(1'b0), .dsd_on(1'b0),
         .spdif_in(4'b0000),
         .in2_bclk(b2), .in2_lrck(l2), .in2_sdata(d2),
         .in3_bclk(b3), .in3_lrck(l3), .in3_sdata(d3), .in3_dsd(hflag),
@@ -160,7 +161,7 @@ module tb_hdmi;
     initial begin
         #(3e6);
         rd_regs(8'h05, r0, r1, r2, r3);
-        check(r0, 8'hA5, "ID"); check(r1, 8'h07, "VERSION");
+        check(r0, 8'hA5, "ID"); check(r1, 8'h08, "VERSION");
         rd_regs(8'h0D, r0, r1, r2, r3);
         check(r0, 8'hC1, "DSD_MODE"); check(r1, 8'h0F, "DSD_CFG");
         // in2: PCM with auto-detect on

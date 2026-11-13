@@ -1,0 +1,127 @@
+// ax_bridge_d2.cst - FPGA pins of the DigiD D2 main board (schematic NAXF, 13.11.2026).
+// ONE file for both projects: ax-bridge and ax-bridge2 carry this file
+// byte-for-byte identical, so both bitstreams run on the same board.
+// Change it only together with the board and copy it to both repositories.
+//
+// Tang Primer 25K (GW5A-LV25MG121NC1/I0); every bank used here is 3.3 V.
+// Bank 2 (L2, L1, K1) is powered from outside: VCCIO2/3 on J2-2 / J2-4 = 3.3 V.
+// Module connector pins J1-n / J2-n per the Sipeed Tang Primer 25K specification.
+// All pins below are also on the Dock headers (Dock schematic Tang_25K_60033).
+//
+// Not on the D2 board: the second oscillator, mclk_sel, fox_fsel (ax-bridge2
+// builds without these ports, see AXB_SIM_PORTS in rtl/top.v) and the HDMI
+// DSD flag in3_dsd (tied to 0 inside; DSD on HDMI is found automatically).
+// RECONFIG_N and JTAG are the module's dedicated pins.
+
+// ---- Clocks ----
+// 50 MHz oscillator ON the Tang Primer 25K module (GCLKT_10B): ax-bridge2
+// service clock. ax-bridge has the port but does not use it.
+IO_LOC "sys_clk" E2;
+IO_PORT "sys_clk" IO_TYPE=LVCMOS33 PULL_MODE=NONE BANK_VCCIO=3.3;
+
+// audio MCLK: the only oscillator, 49.152 MHz, shared with the AX5689; J2-7, GCLKT_9B (bank 5)
+IO_LOC "mclk_in" F2;
+IO_PORT "mclk_in" IO_TYPE=LVCMOS33 PULL_MODE=NONE BANK_VCCIO=3.3;
+
+// ---- To the AX5689: I2S 192 kHz, 32-bit, master ----
+// BCLK, J2-6
+IO_LOC "i2s_bclk_out" L2;
+IO_PORT "i2s_bclk_out" IO_TYPE=LVCMOS33 DRIVE=8 BANK_VCCIO=3.3;
+
+// LRCK, J2-8
+IO_LOC "i2s_lrck_out" L1;
+IO_PORT "i2s_lrck_out" IO_TYPE=LVCMOS33 DRIVE=8 BANK_VCCIO=3.3;
+
+// DATA, J2-10
+IO_LOC "i2s_sdata_out" K1;
+IO_PORT "i2s_sdata_out" IO_TYPE=LVCMOS33 DRIVE=8 BANK_VCCIO=3.3;
+
+// high while audio is passed -> STM32 PD2, J1-58
+IO_LOC "audio_on" A10;
+IO_PORT "audio_on" IO_TYPE=LVCMOS33 DRIVE=4 BANK_VCCIO=3.3;
+
+// ---- I2C slave 0x5A (STM32 I2C3; pull-ups on the board) ----
+// SCL, J1-18
+IO_LOC "i2c_scl" G8;
+IO_PORT "i2c_scl" IO_TYPE=LVCMOS33 PULL_MODE=UP BANK_VCCIO=3.3;
+
+// SDA, J1-12
+IO_LOC "i2c_sda" H8;
+IO_PORT "i2c_sda" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8 BANK_VCCIO=3.3;
+
+// ---- Input 0: Fox (Luckfox Core1106) ----
+// Fox pin 24 I2S_SCLK: BCLK / DSD bit clock, J1-4 (GCLKT_2)
+IO_LOC "i2s_bclk_in" H5;
+IO_PORT "i2s_bclk_in" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
+// Fox pin 25 I2S_LRCK: LRCK (PCM, DoP), J1-47
+IO_LOC "i2s_lrck_in" D11;
+IO_PORT "i2s_lrck_in" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
+// Fox pin 29 I2S_DATA: PCM / DoP data, native DSD right channel, J1-55
+IO_LOC "i2s_sdata_in" B11;
+IO_PORT "i2s_sdata_in" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
+// Fox pin 27 I2S_SDO1 / DSD_L: native DSD left channel (33 R on the board), J1-54
+IO_LOC "i2s_dsdl_in" E10;
+IO_PORT "i2s_dsdl_in" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
+// Fox pin 19 DSD_ON: native-DSD flag, J1-41
+IO_LOC "dsd_on" G11;
+IO_PORT "dsd_on" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
+// ---- Input 1: S/PDIF (data only, no clock pins) ----
+// coax (receiver stage on the main board), J1-53
+IO_LOC "spdif_in[0]" C10;
+IO_PORT "spdif_in[0]" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
+// optical (on the main board), J1-49
+IO_LOC "spdif_in[1]" D10;
+IO_PORT "spdif_in[1]" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
+// AES/EBU (on the main board), J1-57
+IO_LOC "spdif_in[2]" B10;
+IO_PORT "spdif_in[2]" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
+// HDMI ARC (from the inputs module), J1-20
+IO_LOC "spdif_in[3]" F5;
+IO_PORT "spdif_in[3]" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
+// ---- Input 2: Bluetooth I2S ----
+// BCLK, J1-7 (GCLKT_0)
+IO_LOC "in2_bclk" J8;
+IO_PORT "in2_bclk" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
+// LRCK, J1-43
+IO_LOC "in2_lrck" G10;
+IO_PORT "in2_lrck" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
+// DATA, J1-48
+IO_LOC "in2_sdata" L11;
+IO_PORT "in2_sdata" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
+// ---- Input 3: HDMI I2S (DSD detected automatically, no flag pin) ----
+// BCLK, J1-11 (GCLKT_1)
+IO_LOC "in3_bclk" F7;
+IO_PORT "in3_bclk" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
+// LRCK, J1-22
+IO_LOC "in3_lrck" G5;
+IO_PORT "in3_lrck" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
+// DATA, J1-16
+IO_LOC "in3_sdata" G7;
+IO_PORT "in3_sdata" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
+// ---- Input 4: phono / line ADC (AK5572) ----
+// BCLK, J1-33 (GCLKT_15)
+IO_LOC "in4_bclk" J11;
+IO_PORT "in4_bclk" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
+// LRCK, J1-35
+IO_LOC "in4_lrck" J10;
+IO_PORT "in4_lrck" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;
+
+// DATA, J1-42
+IO_LOC "in4_sdata" L10;
+IO_PORT "in4_sdata" IO_TYPE=LVCMOS33 PULL_MODE=DOWN BANK_VCCIO=3.3;

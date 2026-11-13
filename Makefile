@@ -4,12 +4,12 @@ SHELL := /bin/bash
 RTL := rtl/mem.v rtl/afifo.v rtl/in_mux.v rtl/bclk_rx.v rtl/spdif_rx.v rtl/rate_mon.v rtl/dop_det.v \
        rtl/cic5_dsd.v rtl/fir_stage.v rtl/asrc.v rtl/i2s_tx32.v rtl/i2c_slave.v rtl/eq_biquad.v rtl/top.v
 
-.PHONY: all verify coef units eq eqsys hdmi spdif spdif_stress corner sys switch mux clip recover lint synth jf jf_audio clean
+.PHONY: dsdl all verify coef units eq eqsys hdmi spdif spdif_stress corner sys switch mux clip recover lint synth jf jf_audio clean
 
 all: verify
 
 # Everything that must be green before flashing.
-verify: coef lint units eq corner synth sys switch mux clip recover eqsys hdmi spdif spdif_stress
+verify: coef lint units eq corner synth sys dsdl switch mux clip recover eqsys hdmi spdif spdif_stress
 
 coef:
 	python3 tools/gen_coefs.py --check
@@ -69,6 +69,11 @@ spdif_stress:
 # ~25-40 min with Icarus; single case: python3 tb/run_sys.py pcm44
 sys:
 	python3 tb/run_sys.py
+
+# Fox native DSD left channel: own line (D2, FOX_DSDL = 1, LRCK pin = noise),
+# old three-wire layout, swapped order, PCM with noise on the DSD left line
+dsdl:
+	python3 tb/run_sys.py --dsdl
 
 # Live format switching (PCM 44.1 -> 96 -> DSD64 -> 768k -> DoP64 -> 192k,
 # with and without clock stops): relock on the right path, no clicks.

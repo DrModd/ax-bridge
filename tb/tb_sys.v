@@ -1,3 +1,4 @@
+`define AXB_SIM_PORTS   // top: bench ports (in3_dsd)
 `timescale 1ns/1fs
 // System bench: behavioural transport (own clock with a ppm offset) ->
 // top -> I2S output decoded from the pins and dumped to build/sys_out.txt
@@ -5,6 +6,11 @@
 //   MODE 0: PCM I2S, 32-bit slots, FS Hz, sine FL on L / FR on R, AMP dBFS
 //   MODE 1: native DSD (Amanero), bit rate FS Hz, bits from build/dsd.hex
 //   MODE 2: DoP, frame rate FS Hz, bits from build/dsd.hex
+// LANE = FOX_DSDL: 1 (D2) - DSD left on i2s_dsdl_in, the LRCK pin carries
+// noise in DSD; 0 - old three-wire layout, DSD left on LRCK, i2s_dsdl_in
+// carries noise. In PCM / DoP i2s_dsdl_in always carries noise. A line taken
+// by mistake turns a channel into noise (THD+N check).
+// RS = DSD_SDATA_IS_RIGHT: 0 swaps the DSD channels (expect L = FR, R = FL).
 module tb_sys;
     parameter integer MODE = 0;
     parameter real    FS   = 44100.0;
@@ -20,6 +26,8 @@ module tb_sys;
     parameter real    PHL      = 0.0;        // phase of the left tone (rad)
     parameter real    AMPR     = -1.0;       // right amplitude (<0: = AMP)
     parameter integer ATT      = 0;          // PCM headroom (0.5 dB steps)
+    parameter integer LANE     = 1;          // FOX_DSDL
+    parameter integer RS       = 1;          // DSD_SDATA_IS_RIGHT
 
     // ---------------- local 49.152 MHz ----------------
     reg mclk = 0;
@@ -27,6 +35,13 @@ module tb_sys;
 
     // ---------------- transport ----------------
     reg bclk = 0, lrck = 0, sdata = 0, dsd_on = 0;
+    reg dsd_l = 0;       // native DSD left channel bit
+    // unrelated random bit stream (~2.9 Mbit/s) for the line that must be ignored
+    reg [15:0] lf = 16'hACE1;
+    always #171.3 lf = {lf[14:0], lf[15] ^ lf[13] ^ lf[12] ^ lf[10]};
+    wire noise = lf[0];
+    wire lrck_pin = (MODE == 1) ? (LANE ? noise : dsd_l) : lrck;
+    wire dsdl_pin = (MODE == 1 && LANE) ? dsd_l : noise;
     real tb_half;        // half period of the transport bit clock (ns)
     initial begin
         if (MODE == 1)
@@ -63,8 +78,8 @@ module tb_sys;
     endfunction
     always @(negedge bclk) begin
         if (MODE == 1) begin
-            // native DSD: LRCK pin = left, SDATA = right (PureFox wiring)
-            lrck  <= dsdw[(dsdi / 16) % DSDN][31 - (dsdi % 16)];
+            // native DSD: left (LRCK pin or i2s_dsdl_in, see LANE), SDATA = right
+            dsd_l <= dsdw[(dsdi / 16) % DSDN][31 - (dsdi % 16)];
             sdata <= dsdw[(dsdi / 16) % DSDN][15 - (dsdi % 16)];
             dsdi = dsdi + 1;
         end else begin
@@ -93,8 +108,10 @@ module tb_sys;
     // ---------------- DUT ----------------
     wire obclk, olrck, osdata, audio_on;
     tri1 i2c_sda;
-    top #(.WBITS(TB_WBITS), .GSH(TB_GSH), .ATT_DEFAULT(ATT)) dut (
-        .mclk_in(mclk), .i2s_bclk_in(bclk), .i2s_lrck_in(lrck),
+    top #(.WBITS(TB_WBITS), .GSH(TB_GSH), .ATT_DEFAULT(ATT), .FOX_DSDL(LANE),
+          .DSD_SDATA_IS_RIGHT(RS)) dut (
+        .mclk_in(mclk), .sys_clk(1'b0), .i2s_bclk_in(bclk), .i2s_lrck_in(lrck_pin),
+        .i2s_dsdl_in(dsdl_pin),
         .i2s_sdata_in(sdata), .dsd_on(dsd_on),
         .spdif_in(4'b0000),
         .in2_bclk(1'b0), .in2_lrck(1'b0), .in2_sdata(1'b0),

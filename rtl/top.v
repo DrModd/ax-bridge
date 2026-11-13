@@ -26,6 +26,10 @@ module top #(
     parameter GSH   = 0,       // DPLL gear length shift (sim only)
     parameter DSD_SDATA_IS_RIGHT = 1,   // input 0 (Fox) DSD channel order after reset
     parameter USE_DCS = 0,
+    // Fox native DSD, left channel: 1 = own line i2s_dsdl_in (Fox pin 27,
+    // I2S_SDO1, DigiD D2 board); 0 = old three-wire Amanero layout, left on
+    // the LRCK pin. PCM and DoP always use LRCK.
+    parameter FOX_DSDL = 1,
     parameter [6:0] I2C_ADDR = 7'h5A,
     parameter [3:0] ATT_DEFAULT = 4'd0,  // PCM headroom after reset, 0.5 dB steps
     // Folder with the filter coefficient tables (coef/*.bin), read by
@@ -37,15 +41,22 @@ module top #(
     parameter COEF_DIR = "coef/"
 ) (
     input  wire mclk_in,        // 49.152 MHz local oscillator
-    input  wire i2s_bclk_in,    // input 0 (Fox): BCLK / DSD bit clock
-    input  wire i2s_lrck_in,    //   LRCK / DSD DATA2
-    input  wire i2s_sdata_in,   //   SDATA / DSD DATA1
-    input  wire dsd_on,         //   Amanero-style native-DSD flag
+    // 50 MHz oscillator of the Tang Primer 25K module: not used here. The
+    // port exists only because gowin/ax_bridge_d2.cst is shared with
+    // ax-bridge2, which runs its service logic from it.
+    input  wire sys_clk,
+`ifdef AXB_SIM_PORTS
+    input  wire in3_dsd,        // HDMI native-DSD flag: not on the D2 board (benches only)
+`endif
+    input  wire i2s_bclk_in,    // input 0 (Fox): BCLK / DSD bit clock (pin 24)
+    input  wire i2s_lrck_in,    //   LRCK (pin 25); DSD left with FOX_DSDL = 0
+    input  wire i2s_sdata_in,   //   PCM data / DSD right (pin 29)
+    input  wire i2s_dsdl_in,    //   DSD left (pin 27, I2S_SDO1), FOX_DSDL = 1
+    input  wire dsd_on,         //   Amanero-style native-DSD flag (pin 19)
     input  wire [3:0] spdif_in, // input 1: S/PDIF lines 0 coax, 1 optical, 2 AES/EBU, 3 HDMI ARC
     // inputs 2..3: I2S PCM
     input  wire in2_bclk, in2_lrck, in2_sdata,
     input  wire in3_bclk, in3_lrck, in3_sdata,
-    input  wire in3_dsd,        //   input 3 (HDMI) native-DSD flag (optional)
     input  wire in4_bclk, in4_lrck, in4_sdata,   // input 4: phono / line ADC
     input  wire i2c_scl,
     inout  wire i2c_sda,
@@ -55,6 +66,11 @@ module top #(
     output wire audio_on        // high while audio is passed (lock + unmuted)
 );
     wire clk = mclk_in;
+`ifndef AXB_SIM_PORTS
+    // D2 board: no HDMI DSD flag pin, DSD on HDMI is found by auto-detection
+    // (DSD_MODE bit 7, on after reset)
+    wire in3_dsd = 1'b0;
+`endif
 
     // ---------------- resets ----------------
     reg [7:0] por = 8'd0;
@@ -82,10 +98,15 @@ module top #(
     reg  [7:0] ctl_dmode;     // I2C 0x0D
     reg  [3:0] ctl_dinv, ctl_dswap;   // I2C 0x0E
     wire [4:0] in_active, mux_active;
+    // Fox native DSD (flag on, flag used): left channel from its own line.
+    // Same condition as the flag inside in_mux, so the line follows the
+    // format; swapping by DSD_CFG works as before ("LRCK" = this line).
+    wire fox_dsd_flag = ctl_dmode[0] & (dsd_on ^ ctl_dinv[0]);
+    wire fox_l = (FOX_DSDL != 0 && fox_dsd_flag) ? i2s_dsdl_in : i2s_lrck_in;
     in_mux #(.USE_DCS(USE_DCS)) u_mux (
         .clk(clk), .rst_n(rst_n), .sel(sel_cur),
         .bclk_in({in4_bclk, in3_bclk, in2_bclk, 1'b0, i2s_bclk_in}),   // input 1: S/PDIF, not I2S
-        .lrck_in({in4_lrck, in3_lrck, in2_lrck, 1'b0, i2s_lrck_in}),
+        .lrck_in({in4_lrck, in3_lrck, in2_lrck, 1'b0, fox_l}),
         .sdata_in({in4_sdata, in3_sdata, in2_sdata, 1'b0, i2s_sdata_in}),
         .dsd_on0(dsd_on), .dsd_on3(in3_dsd),
         .dsd_mode(ctl_dmode), .dsd_inv(ctl_dinv), .dsd_swap(ctl_dswap),
@@ -506,7 +527,7 @@ module top #(
     //                  0x21..0x23 DoP64..256 (+0x08: 48k-family DSD)
     // 0x04 PLL     r   DPLL gear (0..4)
     // 0x05 ID      r   0xA5
-    // 0x06 VERSION r   0x07
+    // 0x06 VERSION r   0x08 (0x08: D2 board pins, Fox DSD left on its own line)
     // 0x07 ATT     rw  [3:0] PCM headroom 0..12 x 0.5 dB (0..6 dB)
     // 0x08 CLIP    r   [0] saturation within the last ~85 ms, [7] sticky
     //              w   any value clears the sticky bit
@@ -635,7 +656,7 @@ module top #(
             8'h03: i2c_rd = rate_code;
             8'h04: i2c_rd = {5'd0, a_gear};
             8'h05: i2c_rd = 8'hA5;
-            8'h06: i2c_rd = 8'h07;
+            8'h06: i2c_rd = 8'h08;
             8'h07: i2c_rd = {4'd0, ctl_att};
             8'h08: i2c_rd = {clip_sticky, 6'd0, clip_tmr != 22'd0};
             8'h09: i2c_rd = {eq_nsec, 2'd0, eq_bank, eq_pend};

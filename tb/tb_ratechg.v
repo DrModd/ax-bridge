@@ -1,3 +1,4 @@
+`define AXB_SIM_PORTS   // top: bench ports (in3_dsd)
 `timescale 1ns/1fs
 // Source changes its sample rate on the fly (next track on a CD transport /
 // streamer): the S/PDIF line keeps toggling, rate changes at a frame
@@ -77,7 +78,7 @@ module tb_ratechg;
     top #(.WBITS(16), .GSH(4)) dut (
         .mclk_in(mclk),
 `endif
-        .i2s_bclk_in(1'b0), .i2s_lrck_in(1'b0), .i2s_sdata_in(1'b0), .dsd_on(1'b0),
+        .i2s_bclk_in(1'b0), .i2s_lrck_in(1'b0), .i2s_dsdl_in(1'b0), .i2s_sdata_in(1'b0), .dsd_on(1'b0),
         .spdif_in({3'b000, sp0}),
         .in2_bclk(1'b0), .in2_lrck(1'b0), .in2_sdata(1'b0),
         .in3_bclk(1'b0), .in3_lrck(1'b0), .in3_sdata(1'b0), .in3_dsd(1'b0),
