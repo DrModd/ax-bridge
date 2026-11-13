@@ -104,8 +104,8 @@ synth:
 	mkdir -p build
 	yosys -p "read_verilog $(RTL); hierarchy -check -top top; proc; opt -fast; memory -nomap; opt -fast; flatten; stat" > build/synth.log
 	! grep -iE "error" build/synth.log
-	grep -E -q '[$$]mul +13$$' build/synth.log
-	grep -E -q '[$$]mem_v2 +15$$' build/synth.log
+	grep -E -q '([$$]mul +13$$|^ +13 +[$$]mul$$)' build/synth.log   # old / new yosys stat layout
+	grep -E -q '([$$]mem_v2 +15$$|^ +15 +[$$]mem_v2$$)' build/synth.log   # old / new yosys stat layout
 
 # ---- jitter_fifo (standalone module, not yet wired into top) ----
 JF = jitter_fifo/rtl/jitter_fifo.v jitter_fifo/tb/tb_jitter_fifo.v
