@@ -153,7 +153,7 @@ module tb_mux;
     initial begin
         #(5e6);
         rd_regs(8'h05, r0, r1, r2, r3);
-        check(r0, 8'hA5, "ID"); check(r1, 8'h08, "VERSION");
+        check(r0, 8'hA5, "ID"); check(r1, 8'h09, "VERSION");
         // input 0 (default): DSD64
         wait_on(60.0);
         rd_regs(8'h00, r0, r1, r2, r3);

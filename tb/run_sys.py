@@ -169,14 +169,17 @@ def run_case(name, nout=8192, thdn_limit=-110.0, extra=(), swap=False, tag=None)
 def run_dsdl():
     """Fox native DSD left channel: D2 layout (own line, LRCK pin = noise),
     old three-wire layout (LRCK = left, own line = noise), swapped order,
-    PCM with noise on the DSD left line. L 997 / R 3001 Hz."""
+    PCM and DoP with noise on the DSD left line. L 997 / R 3001 Hz."""
     ok = True
     for tag, name, extra, swap in (
             ("dsd64 D2 line", "dsd64", ["-Ptb_sys.LANE=1"], False),
             ("dsd64 old LRCK", "dsd64", ["-Ptb_sys.LANE=0"], False),
             ("dsd64 D2 swap", "dsd64", ["-Ptb_sys.LANE=1", "-Ptb_sys.RS=0"], True),
             ("dsd256 D2 line", "dsd256", ["-Ptb_sys.LANE=1"], False),
-            ("pcm44 D2", "pcm44", ["-Ptb_sys.LANE=1"], False)):
+            ("pcm44 D2", "pcm44", ["-Ptb_sys.LANE=1"], False),
+            ("dop64 D2", "dop64", ["-Ptb_sys.LANE=1"], False),
+            ("dsd128 old LRCK", "dsd128", ["-Ptb_sys.LANE=0"], False),
+            ("pcm44 old LRCK", "pcm44", ["-Ptb_sys.LANE=0"], False)):
         lim = -110.0 if CASES[name][0] == 0 else -100.0
         ok &= run_case(name, thdn_limit=lim, extra=extra, swap=swap, tag=tag)
     print("PASS dsdl" if ok else "FAIL dsdl")

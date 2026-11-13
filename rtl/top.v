@@ -527,7 +527,8 @@ module top #(
     //                  0x21..0x23 DoP64..256 (+0x08: 48k-family DSD)
     // 0x04 PLL     r   DPLL gear (0..4)
     // 0x05 ID      r   0xA5
-    // 0x06 VERSION r   0x08 (0x08: D2 board pins, Fox DSD left on its own line)
+    // 0x06 VERSION r   0x09 (0x08: D2 board pins, Fox DSD left on its own line;
+    //                  0x09: D2 pins per NAXF 13.11.2026 - MCLK L4, outputs C2/B2/A1)
     // 0x07 ATT     rw  [3:0] PCM headroom 0..12 x 0.5 dB (0..6 dB)
     // 0x08 CLIP    r   [0] saturation within the last ~85 ms, [7] sticky
     //              w   any value clears the sticky bit
@@ -656,7 +657,7 @@ module top #(
             8'h03: i2c_rd = rate_code;
             8'h04: i2c_rd = {5'd0, a_gear};
             8'h05: i2c_rd = 8'hA5;
-            8'h06: i2c_rd = 8'h08;
+            8'h06: i2c_rd = 8'h09;
             8'h07: i2c_rd = {4'd0, ctl_att};
             8'h08: i2c_rd = {clip_sticky, 6'd0, clip_tmr != 22'd0};
             8'h09: i2c_rd = {eq_nsec, 2'd0, eq_bank, eq_pend};

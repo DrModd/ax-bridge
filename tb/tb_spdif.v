@@ -163,7 +163,7 @@ module tb_spdif;
     initial begin
         #(3e6);
         rd_regs(8'h05, r0, r1, r2, r3);
-        check(r0, 8'hA5, "ID"); check(r1, 8'h08, "VERSION");
+        check(r0, 8'hA5, "ID"); check(r1, 8'h09, "VERSION");
         // line 0: coax 192k
         wr_reg(8'h00, 8'h01);
         wait_on(80.0);
